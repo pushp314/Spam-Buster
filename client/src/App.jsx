@@ -162,10 +162,10 @@ function App() {
       {/* Header */}
       <header className="gmail-header">
         <div className="flex items-center gap-3 min-w-[240px]">
-          <div className="bg-blue-600 p-1.5 rounded-lg">
+          <div className="bg-red-600 p-1.5 rounded-lg">
             <ShieldAlert className="text-white" size={20} />
           </div>
-          <span className="text-xl text-slate-700 font-black tracking-tighter">BAYES BUSTER</span>
+          <span className="text-xl text-slate-700 font-black tracking-tighter uppercase">Spam Buster</span>
         </div>
 
         <div className="search-bar">
