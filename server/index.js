@@ -22,9 +22,18 @@ app.use(cookieSession({
 }));
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/spam-buster')
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+const connectDB = async () => {
+  try {
+    const conn = await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/spam-buster', {
+      serverSelectionTimeoutMS: 5000,
+    });
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+  } catch (err) {
+    console.error('❌ MongoDB Connection Error:', err.message);
+    // Let it continue but it might fail on requests
+  }
+};
+connectDB();
 
 // Ollama / Naive Bayes AI Configs
 // Internally we use the keys for processing, but UI will reflect custom open-source logic
@@ -134,8 +143,9 @@ const classifyMessage = async (subject, snippet, selectedModel, keys = {}) => {
   Strict JSON output only:
   {
     "label": "spam" or "not spam",
+    "department": "Maths department" | "CS department" | "Management department" | "Science department" | "Other",
     "confidence": number,
-    "reason": "Explain using probability patterns"
+    "reason": "Explain using probability patterns and why it belongs to this department"
   }
 
   DATA:
@@ -164,7 +174,15 @@ const classifyMessage = async (subject, snippet, selectedModel, keys = {}) => {
 
     console.log(`🧠 Smart Classifier (${modelId}):`, responseText);
     const cleanedJson = responseText.replace(/```json|```/g, '').trim();
-    return JSON.parse(cleanedJson);
+    const result = JSON.parse(cleanedJson);
+    
+    // Normalize department to match enum
+    const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department'];
+    if (!validDepts.includes(result.department)) {
+      result.department = 'Other';
+    }
+    
+    return result;
   } catch (err) {
     console.error(`❌ Bayes analysis error:`, err.message);
     return { label: 'not spam', confidence: 50, reason: 'Bayesian pattern recognition failed' };
@@ -196,6 +214,7 @@ app.get('/api/gmail/sync', async (req, res) => {
       const newMessage = new Message({
         text: `Subject: ${subject}\n\n${snippet}`,
         label: classification.label.toLowerCase(),
+        department: classification.department || 'Other',
         confidence: classification.confidence,
         reason: classification.reason,
         gmailId: msg.id,
@@ -206,8 +225,8 @@ app.get('/api/gmail/sync', async (req, res) => {
     }
     res.json({ count: results.length, newMessages: results });
   } catch (err) {
-    console.error('❌ Sync error:', err.message);
-    res.status(500).json({ error: 'Sync failed' });
+    console.error('❌ Sync error:', err);
+    res.status(500).json({ error: 'Sync failed', message: err.message });
   }
 });
 
@@ -244,7 +263,8 @@ app.get('/api/messages', async (req, res) => {
     const messages = await Message.find().sort({ createdAt: -1 });
     res.json(messages);
   } catch (err) {
-    res.status(500).json({ error: 'Failed' });
+    console.error('❌ Error fetching messages:', err);
+    res.status(500).json({ error: 'Failed', message: err.message });
   }
 });
 

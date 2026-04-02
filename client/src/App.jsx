@@ -22,7 +22,12 @@ import {
   User as UserIcon,
   Settings,
   Plus,
-  AlertCircle
+  AlertCircle,
+  Calculator,
+  Cpu,
+  Briefcase,
+  FlaskConical,
+  Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
@@ -49,6 +54,7 @@ function App() {
   const [manualText, setManualText] = useState('');
   const [manualResult, setManualResult] = useState(null);
   const [isManualChecking, setIsManualChecking] = useState(false);
+  const [selectedDept, setSelectedDept] = useState('All');
 
   useEffect(() => {
     checkConnection();
@@ -70,7 +76,7 @@ function App() {
       const { data } = await axios.get(`${API_URL}/messages`);
       setMessages(data);
     } catch (err) {
-      console.error('Error fetching messages:', err);
+      console.error('Error fetching messages:', err.response?.data?.message || err.message);
     } finally {
       setIsLoading(false);
     }
@@ -125,9 +131,8 @@ function App() {
       setSyncProgress(100);
       fetchMessages();
     } catch (err) {
-      console.error('Sync error:', err);
-      alert('Session expired. Please reconnect.');
-      setUser(null);
+      console.error('Sync error:', err.response?.data?.message || err.message);
+      alert('Sync failed: ' + (err.response?.data?.message || 'Check connection'));
     } finally {
       setTimeout(() => {
         setIsSyncing(false);
@@ -155,6 +160,7 @@ function App() {
 
   const filteredMessages = messages
     .filter((msg) => activeTab === 'inbox' ? msg.label !== 'spam' : msg.label === 'spam')
+    .filter((msg) => selectedDept === 'All' || msg.department === selectedDept)
     .filter((msg) => msg.text.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
@@ -276,6 +282,32 @@ function App() {
             <span>How it Works</span>
           </div>
 
+          {(activeTab === 'inbox' || activeTab === 'spam') && (
+            <div className="mt-6">
+              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Departments</p>
+              <div className={`nav-item ${selectedDept === 'All' ? 'active' : ''}`} onClick={() => setSelectedDept('All')}>
+                <Layers size={18} />
+                <span>All Mail</span>
+              </div>
+              <div className={`nav-item ${selectedDept === 'Maths department' ? 'active' : ''}`} onClick={() => setSelectedDept('Maths department')}>
+                <Calculator size={18} />
+                <span>Maths</span>
+              </div>
+              <div className={`nav-item ${selectedDept === 'CS department' ? 'active' : ''}`} onClick={() => setSelectedDept('CS department')}>
+                <Cpu size={18} />
+                <span>CS</span>
+              </div>
+              <div className={`nav-item ${selectedDept === 'Management department' ? 'active' : ''}`} onClick={() => setSelectedDept('Management department')}>
+                <Briefcase size={18} />
+                <span>Management</span>
+              </div>
+              <div className={`nav-item ${selectedDept === 'Science department' ? 'active' : ''}`} onClick={() => setSelectedDept('Science department')}>
+                <FlaskConical size={18} />
+                <span>Science</span>
+              </div>
+            </div>
+          )}
+
           <div className="mt-auto p-4 border-t border-slate-200">
              <div className="flex items-center justify-between group">
                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Core Engine</span>
@@ -337,11 +369,17 @@ function App() {
                   <AnimatePresence>
                     {manualResult && (
                       <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className={`mt-8 p-6 rounded-2xl border ${manualResult.label === 'spam' ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
-                        <div className="flex items-center justify-between mb-4">
-                           <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${manualResult.label === 'spam' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                             {manualResult.label} DETECTED
-                           </span>
-                           <span className="text-sm font-bold text-slate-600">{manualResult.confidence}% Confidence</span>
+                        <div className="flex flex-col gap-2 mb-4">
+                           <div className="flex items-center justify-between">
+                              <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${manualResult.label === 'spam' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                                {manualResult.label} DETECTED
+                              </span>
+                              <span className="text-sm font-bold text-slate-600">{manualResult.confidence}% Confidence</span>
+                           </div>
+                           <div className="flex items-center gap-2">
+                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Classification:</span>
+                             <span className="px-3 py-0.5 rounded-full bg-blue-100 text-blue-600 text-[10px] font-black uppercase">{manualResult.department || 'Other'}</span>
+                           </div>
                         </div>
                         <p className="text-xs text-left text-slate-500 font-medium leading-relaxed italic">
                           <span className="font-bold text-slate-700">Bayes Reason:</span> {manualResult.reason}
@@ -399,9 +437,14 @@ function App() {
                         <span className="snippet-text"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 100)}...</span>
                       </div>
 
-                      <div className="flex items-center gap- shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
                         <div className="flex flex-col items-end mr-4">
-                           <span className={`badge ${msg.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>{Math.round(msg.confidence)}% N.B</span>
+                           <div className="flex items-center gap-2">
+                             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[8px] font-black uppercase tracking-tight">
+                               {msg.department || 'Other'}
+                             </span>
+                             <span className={`badge ${msg.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>{Math.round(msg.confidence)}% N.B</span>
+                           </div>
                            <span className="text-[10px] text-slate-400">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                       </div>
@@ -514,6 +557,17 @@ function App() {
                        <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0">AI Intelligence Log</label>
                     </div>
                     <div className="space-y-4">
+                       <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-blue-50">
+                          <span className="text-xs text-slate-500">Department</span>
+                          <div className="flex items-center gap-2">
+                             {selectedMessage.department === 'Maths department' && <Calculator size={14} className="text-blue-600" />}
+                             {selectedMessage.department === 'CS department' && <Cpu size={14} className="text-blue-600" />}
+                             {selectedMessage.department === 'Management department' && <Briefcase size={14} className="text-blue-600" />}
+                             {selectedMessage.department === 'Science department' && <FlaskConical size={14} className="text-blue-600" />}
+                             {(selectedMessage.department === 'Other' || !selectedMessage.department) && <Layers size={14} className="text-blue-600" />}
+                             <span className="text-sm font-black text-blue-600">{selectedMessage.department || 'Other'}</span>
+                          </div>
+                       </div>
                        <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-blue-50">
                           <span className="text-xs text-slate-500">Confidence Score</span>
                           <span className="text-sm font-black text-blue-600">{Math.round(selectedMessage.confidence)}%</span>

@@ -22,6 +22,11 @@ const MessageSchema = new mongoose.Schema({
     type: String,
     unique: true,
   },
+  department: {
+    type: String,
+    enum: ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'],
+    default: 'Other',
+  },
   createdAt: {
     type: Date,
     default: Date.now,
