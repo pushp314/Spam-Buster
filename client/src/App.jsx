@@ -55,6 +55,7 @@ function App() {
   const [manualResult, setManualResult] = useState(null);
   const [isManualChecking, setIsManualChecking] = useState(false);
   const [selectedDept, setSelectedDept] = useState('All');
+  const [showLimitModal, setShowLimitModal] = useState(false);
 
   useEffect(() => {
     checkConnection();
@@ -105,7 +106,22 @@ function App() {
       const { data } = await axios.patch(`${API_URL}/messages/${id}/label`, { label: newLabel });
       setMessages(prev => prev.map(m => m._id === id ? data : m));
     } catch (err) {
-      alert('Failed to update label');
+      if (err.response?.status === 429) setShowLimitModal(true);
+      else alert('Failed to update label');
+    }
+  };
+
+  const updateDepartment = async (id, newDept) => {
+    try {
+      const { data } = await axios.patch(`${API_URL}/messages/${id}/department`, { department: newDept });
+      setMessages(prev => prev.map(m => m._id === id ? data : m));
+      // Update selected message if it's the one open
+      if (selectedMessage?._id === id) {
+        setSelectedMessage(data);
+      }
+    } catch (err) {
+      if (err.response?.status === 429) setShowLimitModal(true);
+      else alert('Failed to update department');
     }
   };
 
@@ -132,7 +148,11 @@ function App() {
       fetchMessages();
     } catch (err) {
       console.error('Sync error:', err.response?.data?.message || err.message);
-      alert('Sync failed: ' + (err.response?.data?.message || 'Check connection'));
+      if (err.response?.status === 429) {
+        setShowLimitModal(true);
+      } else {
+        alert('Sync failed: ' + (err.response?.data?.message || 'Check connection'));
+      }
     } finally {
       setTimeout(() => {
         setIsSyncing(false);
@@ -162,6 +182,8 @@ function App() {
     .filter((msg) => activeTab === 'inbox' ? msg.label !== 'spam' : msg.label === 'spam')
     .filter((msg) => selectedDept === 'All' || msg.department === selectedDept)
     .filter((msg) => msg.text.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const departments = ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'];
 
   return (
     <div className="gmail-container">
@@ -425,31 +447,61 @@ function App() {
                      <p className="text-sm">Inbox is clean! All clear.</p>
                    </div>
                 ) : (
-                  filteredMessages.map((msg) => (
-                    <div key={msg._id} className={`email-row ${msg.label === 'spam' ? 'spam' : ''}`} onClick={() => setSelectedMessage(msg)}>
-                      <div className="flex items-center gap-3 w-[200px] shrink-0">
-                        {msg.label === 'spam' ? <ShieldAlert size={16} className="text-red-500" /> : <ShieldCheck size={16} className="text-green-500" />}
-                        <span className="truncate font-medium">{msg.text.split('\n\n')[0].replace('Subject: ', '').substring(0, 20)}...</span>
-                      </div>
-                      
-                      <div className="flex-1 min-w-0 pr-8">
-                        <span className="subject-text">{msg.text.split('\n\n')[0].replace('Subject: ', '')}</span>
-                        <span className="snippet-text"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 100)}...</span>
-                      </div>
+                    filteredMessages.map((msg) => (
+                      <div key={msg._id} className={`email-row group ${msg.label === 'spam' ? 'spam' : ''}`} onClick={() => setSelectedMessage(msg)}>
+                        <div className="flex items-center gap-3 w-[200px] shrink-0">
+                          {msg.label === 'spam' ? <ShieldAlert size={16} className="text-red-500" /> : <ShieldCheck size={16} className="text-green-500" />}
+                          <span className="truncate font-medium">{msg.text.split('\n\n')[0].replace('Subject: ', '').substring(0, 20)}...</span>
+                        </div>
+                        
+                        <div className="flex-1 min-w-0 pr-8">
+                          <span className="subject-text">{msg.text.split('\n\n')[0].replace('Subject: ', '')}</span>
+                          <span className="snippet-text"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 100)}...</span>
+                        </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="flex flex-col items-end mr-4">
-                           <div className="flex items-center gap-2">
-                             <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[8px] font-black uppercase tracking-tight">
-                               {msg.department || 'Other'}
-                             </span>
-                             <span className={`badge ${msg.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>{Math.round(msg.confidence)}% N.B</span>
-                           </div>
-                           <span className="text-[10px] text-slate-400">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="hidden group-hover:flex items-center gap-1 mr-4">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }}
+                              className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-all"
+                              title={msg.label === 'spam' ? 'Mark as Not Spam' : 'Mark as Spam'}
+                            >
+                              {msg.label === 'spam' ? <Inbox size={14} /> : <Trash2 size={14} />}
+                            </button>
+                            <div className="relative group/dept">
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); }}
+                                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-all"
+                                title="Quick Categorize"
+                              >
+                                <Briefcase size={14} />
+                              </button>
+                              <div className="absolute right-0 bottom-full mb-2 hidden group-hover/dept:block bg-white shadow-xl border rounded-xl p-1 z-[60] min-w-[140px]">
+                                {departments.map(dept => (
+                                  <button
+                                    key={dept}
+                                    onClick={(e) => { e.stopPropagation(); updateDepartment(msg._id, dept); }}
+                                    className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-50 rounded-lg"
+                                  >
+                                    {dept.replace(' department', '')}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col items-end mr-4">
+                             <div className="flex items-center gap-2">
+                               <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[8px] font-black uppercase tracking-tight">
+                                 {msg.department || 'Other'}
+                               </span>
+                               <span className={`badge ${msg.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>{Math.round(msg.confidence)}% N.B</span>
+                             </div>
+                             <span className="text-[10px] text-slate-400">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    ))
                 )}
               </div>
             </>
@@ -577,6 +629,25 @@ function App() {
                           {selectedMessage.reason}
                        </p>
                     </div>
+
+                    <div className="mt-6 pt-6 border-t border-blue-100">
+                      <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest block mb-3">Re-categorize Department</label>
+                      <div className="flex flex-wrap gap-2">
+                        {departments.map(dept => (
+                          <button
+                            key={dept}
+                            onClick={() => updateDepartment(selectedMessage._id, dept)}
+                            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all border ${
+                              selectedMessage.department === dept 
+                              ? 'bg-blue-600 text-white border-blue-600' 
+                              : 'bg-white text-slate-500 border-slate-200 hover:border-blue-400'
+                            }`}
+                          >
+                            {dept.replace(' department', '')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                  </section>
               </div>
 
@@ -601,6 +672,30 @@ function App() {
                    </button>
                  )}
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* API Limit Modal */}
+      <AnimatePresence>
+        {showLimitModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowLimitModal(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl border text-center">
+              <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                <AlertCircle className="text-amber-600" size={32} />
+              </div>
+              <h3 className="text-xl font-black text-slate-800 mb-2">API LIMIT REACHED</h3>
+              <p className="text-sm text-slate-500 mb-8 leading-relaxed">
+                You've hit the Google API or Model quota. Please wait a few minutes before syncing again.
+              </p>
+              <button 
+                onClick={() => setShowLimitModal(false)}
+                className="w-full py-4 bg-slate-800 text-white font-black rounded-2xl hover:bg-slate-700 transition-all"
+              >
+                UNDERSTOOD
+              </button>
             </motion.div>
           </div>
         )}

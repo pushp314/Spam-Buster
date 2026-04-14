@@ -178,9 +178,11 @@ const classifyMessage = async (subject, snippet, selectedModel, keys = {}) => {
     
     // Normalize department to match enum
     const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department'];
-    if (!validDepts.includes(result.department)) {
-      result.department = 'Other';
-    }
+    const foundDept = validDepts.find(d => 
+      result.department?.toLowerCase().includes(d.split(' ')[0].toLowerCase())
+    );
+    
+    result.department = foundDept || 'Other';
     
     return result;
   } catch (err) {
@@ -226,6 +228,10 @@ app.get('/api/gmail/sync', async (req, res) => {
     res.json({ count: results.length, newMessages: results });
   } catch (err) {
     console.error('❌ Sync error:', err);
+    // Check for Google API limit or Quota error
+    if (err.errors?.[0]?.reason === 'rateLimitExceeded' || err.code === 429) {
+      return res.status(429).json({ error: 'Quota exceeded', message: 'Gmail API limit reached. Try again later.' });
+    }
     res.status(500).json({ error: 'Sync failed', message: err.message });
   }
 });
@@ -255,6 +261,27 @@ app.patch('/api/messages/:id/label', async (req, res) => {
     res.json(message);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update label' });
+  }
+});
+
+// 8. Update Message Department
+app.patch('/api/messages/:id/department', async (req, res) => {
+  const { department } = req.body;
+  const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'];
+  
+  if (!validDepts.includes(department)) {
+    return res.status(400).json({ error: 'Invalid department' });
+  }
+
+  try {
+    const message = await Message.findByIdAndUpdate(
+      req.params.id, 
+      { department }, 
+      { new: true }
+    );
+    res.json(message);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update department' });
   }
 });
 
