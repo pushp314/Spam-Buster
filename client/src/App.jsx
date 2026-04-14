@@ -27,7 +27,8 @@ import {
   Cpu,
   Briefcase,
   FlaskConical,
-  Layers
+  Layers,
+  Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
@@ -43,9 +44,12 @@ function App() {
   const [activeTab, setActiveTab] = useState('inbox');
   const [user, setUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [groqKey, setGroqKey] = useState('');
-  const [openAIKey, setOpenAIKey] = useState('');
-  const [geminiKey, setGeminiKey] = useState('');
+  
+  // Persistent API Keys
+  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('sb_groq_key') || '');
+  const [openAIKey, setOpenAIKey] = useState(() => localStorage.getItem('sb_openai_key') || '');
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('sb_gemini_key') || '');
+  
   const [showSettings, setShowSettings] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [showProfileDetail, setShowProfileDetail] = useState(false);
@@ -56,6 +60,23 @@ function App() {
   const [isManualChecking, setIsManualChecking] = useState(false);
   const [selectedDept, setSelectedDept] = useState('All');
   const [showLimitModal, setShowLimitModal] = useState(false);
+  
+  // Custom Toast System
+  const [toasts, setToasts] = useState([]);
+
+  const addToast = (message, type = 'success') => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
+
+  useEffect(() => {
+    localStorage.setItem('sb_groq_key', groqKey);
+    localStorage.setItem('sb_openai_key', openAIKey);
+    localStorage.setItem('sb_gemini_key', geminiKey);
+  }, [groqKey, openAIKey, geminiKey]);
 
   useEffect(() => {
     checkConnection();
@@ -88,7 +109,7 @@ function App() {
       const { data } = await axios.get(`${API_URL}/auth/google/url`);
       window.location.href = data.url;
     } catch (err) {
-      alert('Error initiating Gmail connection');
+      addToast('Error initiating Gmail connection', 'error');
     }
   };
 
@@ -96,6 +117,7 @@ function App() {
     try {
       await axios.post(`${API_URL}/auth/logout`);
       setUser(null);
+      addToast('Disconnected from Gmail');
     } catch (err) {
       console.error('Logout failed');
     }
@@ -105,9 +127,10 @@ function App() {
     try {
       const { data } = await axios.patch(`${API_URL}/messages/${id}/label`, { label: newLabel });
       setMessages(prev => prev.map(m => m._id === id ? data : m));
+      addToast(`Message moved to ${newLabel === 'spam' ? 'Spam' : 'Inbox'}`);
     } catch (err) {
       if (err.response?.status === 429) setShowLimitModal(true);
-      else alert('Failed to update label');
+      else addToast('Failed to update label', 'error');
     }
   };
 
@@ -115,13 +138,14 @@ function App() {
     try {
       const { data } = await axios.patch(`${API_URL}/messages/${id}/department`, { department: newDept });
       setMessages(prev => prev.map(m => m._id === id ? data : m));
+      addToast(`Categorized as ${newDept.replace(' department', '')}`);
       // Update selected message if it's the one open
       if (selectedMessage?._id === id) {
         setSelectedMessage(data);
       }
     } catch (err) {
       if (err.response?.status === 429) setShowLimitModal(true);
-      else alert('Failed to update department');
+      else addToast('Failed to update department', 'error');
     }
   };
 
@@ -145,13 +169,14 @@ function App() {
       
       clearInterval(interval);
       setSyncProgress(100);
+      addToast('Sync complete! Latest emails scanned.');
       fetchMessages();
     } catch (err) {
       console.error('Sync error:', err.response?.data?.message || err.message);
       if (err.response?.status === 429) {
         setShowLimitModal(true);
       } else {
-        alert('Sync failed: ' + (err.response?.data?.message || 'Check connection'));
+        addToast('Sync failed: Check connection', 'error');
       }
     } finally {
       setTimeout(() => {
@@ -171,8 +196,9 @@ function App() {
         keys: { groqKey, openAIKey, geminiKey }
       });
       setManualResult(data);
+      addToast('Text analysis complete');
     } catch (err) {
-      alert('Check failed');
+      addToast('Check failed', 'error');
     } finally {
       setIsManualChecking(false);
     }
@@ -187,6 +213,26 @@ function App() {
 
   return (
     <div className="gmail-container">
+      {/* Custom Toast Container */}
+      <div className="fixed bottom-6 right-6 z-[300] flex flex-col gap-3">
+        <AnimatePresence>
+          {toasts.map(t => (
+            <motion.div
+              key={t.id}
+              initial={{ opacity: 0, x: 50, scale: 0.8 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 20, scale: 0.8 }}
+              className={`px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border ${
+                t.type === 'success' ? 'bg-slate-900 text-white border-slate-800' : 'bg-red-50 text-red-600 border-red-100'
+              }`}
+            >
+              {t.type === 'success' ? <CheckCircle size={18} className="text-green-400" /> : <AlertCircle size={18} />}
+              <span className="text-sm font-bold tracking-tight uppercase">{t.message}</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
       {/* Header */}
       <header className="gmail-header">
         <div className="flex items-center gap-3 min-w-[240px]">
@@ -544,9 +590,23 @@ function App() {
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Model Auth Overrides</p>
                    <input 
                       type="password"
-                      placeholder="Bayes Cloud Key"
+                      placeholder="Bayes Cloud Key (Saved Locally)"
                       value={geminiKey}
                       onChange={(e) => setGeminiKey(e.target.value)}
+                      className="w-full py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm"
+                   />
+                   <input 
+                      type="password"
+                      placeholder="Groq API Key (Saved Locally)"
+                      value={groqKey}
+                      onChange={(e) => setGroqKey(e.target.value)}
+                      className="w-full py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm"
+                   />
+                   <input 
+                      type="password"
+                      placeholder="OpenAI API Key (Saved Locally)"
+                      value={openAIKey}
+                      onChange={(e) => setOpenAIKey(e.target.value)}
                       className="w-full py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm"
                    />
                 </div>

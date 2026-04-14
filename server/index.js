@@ -133,12 +133,18 @@ const classifyMessage = async (subject, snippet, selectedModel, keys = {}) => {
   const modelId = selectedModel || 'llama-3.3-70b-versatile'; // Default to open LLM style
   const text = `Subject: ${subject}\nSnippet: ${snippet}`;
   
-  // Custom Naive Bayes style prompt for Ollama
+  // Custom Naive Bayes style prompt with Few-Shot examples
   const prompt = `Act as a Naive Bayes Classifier. Classify based on word frequency and spam patterns:
+  
+  EXAMPLES:
+  1. "Your exam schedule for Advanced Calculus is attached" -> Label: "not spam", Dept: "Maths department"
+  2. "New Python internship opening at Tech Corp" -> Label: "not spam", Dept: "CS department"
+  3. "Winning lottery ticket #4920 inside! Click to claim $50k" -> Label: "spam", Dept: "Other"
+  4. "Quarterly budget meeting moved to Tuesday" -> Label: "not spam", Dept: "Management department"
   
   CRITERIA:
   - SPAM: High frequency of tokens like "Free", "Lottery", "Urgent", "Click here", "Action required".
-  - NOT SPAM: Natural conversation patterns.
+  - NOT SPAM: Natural conversation, academic or professional patterns.
 
   Strict JSON output only:
   {
