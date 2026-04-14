@@ -291,6 +291,41 @@ app.patch('/api/messages/:id/department', async (req, res) => {
   }
 });
 
+// 9. Bulk Update Messages (Label or Department)
+app.patch('/api/messages/bulk/update', async (req, res) => {
+  const { ids, label, department } = req.body;
+  if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'Invalid IDs' });
+
+  const updateData = {};
+  if (label && ['spam', 'not spam'].includes(label)) {
+    updateData.label = label;
+    updateData.confidence = 100;
+    updateData.reason = 'Bulk manual correction';
+  }
+  if (department) {
+    const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'];
+    if (validDepts.includes(department)) {
+      updateData.department = department;
+    }
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    return res.status(400).json({ error: 'No valid updates provided' });
+  }
+
+  try {
+    await Message.updateMany(
+      { _id: { $in: ids } },
+      { $set: updateData }
+    );
+    // Fetch updated messages to return
+    const updatedMessages = await Message.find({ _id: { $in: ids } });
+    res.json(updatedMessages);
+  } catch (err) {
+    res.status(500).json({ error: 'Bulk update failed' });
+  }
+});
+
 app.get('/api/messages', async (req, res) => {
   try {
     const messages = await Message.find().sort({ createdAt: -1 });

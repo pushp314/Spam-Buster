@@ -28,7 +28,11 @@ import {
   Briefcase,
   FlaskConical,
   Layers,
-  Bell
+  Bell,
+  CheckSquare,
+  Square,
+  MoreVertical,
+  ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
@@ -61,6 +65,10 @@ function App() {
   const [selectedDept, setSelectedDept] = useState('All');
   const [showLimitModal, setShowLimitModal] = useState(false);
   
+  // Bulk Action State
+  const [selectedMessageIds, setSelectedMessageIds] = useState([]);
+  const [showBulkDeptDropdown, setShowBulkDeptDropdown] = useState(false);
+
   // Custom Toast System
   const [toasts, setToasts] = useState([]);
 
@@ -139,7 +147,6 @@ function App() {
       const { data } = await axios.patch(`${API_URL}/messages/${id}/department`, { department: newDept });
       setMessages(prev => prev.map(m => m._id === id ? data : m));
       addToast(`Categorized as ${newDept.replace(' department', '')}`);
-      // Update selected message if it's the one open
       if (selectedMessage?._id === id) {
         setSelectedMessage(data);
       }
@@ -149,14 +156,33 @@ function App() {
     }
   };
 
+  const bulkUpdate = async (updates) => {
+    if (selectedMessageIds.length === 0) return;
+    try {
+      const { data } = await axios.patch(`${API_URL}/messages/bulk/update`, {
+        ids: selectedMessageIds,
+        ...updates
+      });
+      // Replace only updated ones
+      setMessages(prev => prev.map(m => {
+        const updated = data.find(u => u._id === m._id);
+        return updated || m;
+      }));
+      addToast(`Bulk updated ${selectedMessageIds.length} messages`);
+      setSelectedMessageIds([]);
+      setShowBulkDeptDropdown(false);
+    } catch (err) {
+      if (err.response?.status === 429) setShowLimitModal(true);
+      else addToast('Bulk update failed', 'error');
+    }
+  };
+
   const syncEmails = async () => {
     if (!user) return connectGmail();
     setIsSyncing(true);
     setSyncProgress(10);
     try {
-      // Mock progress since we can't easily stream the 15 requests count from one route without SSE
       const interval = setInterval(() => setSyncProgress(p => p < 90 ? p + 5 : p), 500);
-      
       await axios.get(`${API_URL}/gmail/sync`, { 
         params: { 
           model: selectedModel, 
@@ -166,18 +192,13 @@ function App() {
           limit: syncLimit
         } 
       });
-      
       clearInterval(interval);
       setSyncProgress(100);
       addToast('Sync complete! Latest emails scanned.');
       fetchMessages();
     } catch (err) {
-      console.error('Sync error:', err.response?.data?.message || err.message);
-      if (err.response?.status === 429) {
-        setShowLimitModal(true);
-      } else {
-        addToast('Sync failed: Check connection', 'error');
-      }
+      if (err.response?.status === 429) setShowLimitModal(true);
+      else addToast('Sync failed: Check connection', 'error');
     } finally {
       setTimeout(() => {
         setIsSyncing(false);
@@ -208,6 +229,21 @@ function App() {
     .filter((msg) => activeTab === 'inbox' ? msg.label !== 'spam' : msg.label === 'spam')
     .filter((msg) => selectedDept === 'All' || msg.department === selectedDept)
     .filter((msg) => msg.text.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const toggleSelectAll = () => {
+    if (selectedMessageIds.length === filteredMessages.length) {
+      setSelectedMessageIds([]);
+    } else {
+      setSelectedMessageIds(filteredMessages.map(m => m._id));
+    }
+  };
+
+  const toggleSelect = (e, id) => {
+    e.stopPropagation();
+    setSelectedMessageIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
 
   const departments = ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'];
 
@@ -262,14 +298,10 @@ function App() {
               onChange={(e) => setSelectedModel(e.target.value)}
               className="bg-transparent text-[10px] font-black uppercase tracking-wider outline-none border-none text-slate-600 cursor-pointer"
             >
-              <optgroup label="Ollama (Local)">
-                <option value="llama-3.3-70b-versatile">Ollama Llama 3</option>
-                <option value="llama-3.1-8b-instant">Ollama 8B (Fast)</option>
-              </optgroup>
-              <optgroup label="Probabilistic Cloud">
-                <option value="gpt-4o-mini">Bayes GPT-4o</option>
-                <option value="gemini-1.5-flash-latest">Naive Flash Engine</option>
-              </optgroup>
+              <option value="llama-3.3-70b-versatile">Ollama Llama 3</option>
+              <option value="llama-3.1-8b-instant">Ollama 8B (Fast)</option>
+              <option value="gpt-4o-mini">Bayes GPT-4o</option>
+              <option value="gemini-1.5-flash-latest">Naive Flash Engine</option>
             </select>
           </div>
 
@@ -282,40 +314,13 @@ function App() {
               <img 
                 src={user.picture} 
                 alt="P" 
-                className="w-8 h-8 rounded-full cursor-pointer border border-slate-200 hover:ring-2 hover:ring-blue-100 transition-all" 
+                className="w-8 h-8 rounded-full cursor-pointer border border-slate-200" 
                 referrerPolicy="no-referrer"
                 onClick={() => setShowProfileDetail(!showProfileDetail)}
               />
-              <AnimatePresence>
-                {showProfileDetail && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowProfileDetail(false)} />
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      className="absolute top-10 right-0 bg-white shadow-2xl rounded-2xl border p-5 z-50 min-w-[240px]"
-                    >
-                      <div className="flex flex-col items-center text-center mb-4">
-                        <img src={user.picture} alt="P" className="w-16 h-16 rounded-full border mb-2" referrerPolicy="no-referrer" />
-                        <p className="font-black text-slate-800 tracking-tight">{user.name}</p>
-                        <p className="text-xs text-slate-500">{user.email}</p>
-                      </div>
-                      <div className="border-t pt-4">
-                        <button 
-                          onClick={disconnectGmail} 
-                          className="w-full py-2.5 text-xs font-black text-white bg-slate-800 rounded-xl hover:bg-slate-700 flex items-center justify-center gap-2 transition-all shadow-lg shadow-slate-200"
-                        >
-                          <LogOut size={14} /> SIGN OUT
-                        </button>
-                      </div>
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
             </div>
           ) : (
-            <button onClick={connectGmail} className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700">LINK GMAIL</button>
+            <button onClick={connectGmail} className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg">LINK GMAIL</button>
           )}
         </div>
       </header>
@@ -345,11 +350,6 @@ function App() {
             <span>Manual Check</span>
           </div>
 
-          <div className={`nav-item ${activeTab === 'about' ? 'active' : ''}`} onClick={() => setActiveTab('about')}>
-            <AlertCircle size={20} />
-            <span>How it Works</span>
-          </div>
-
           {(activeTab === 'inbox' || activeTab === 'spam') && (
             <div className="mt-6">
               <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Departments</p>
@@ -357,385 +357,177 @@ function App() {
                 <Layers size={18} />
                 <span>All Mail</span>
               </div>
-              <div className={`nav-item ${selectedDept === 'Maths department' ? 'active' : ''}`} onClick={() => setSelectedDept('Maths department')}>
-                <Calculator size={18} />
-                <span>Maths</span>
-              </div>
-              <div className={`nav-item ${selectedDept === 'CS department' ? 'active' : ''}`} onClick={() => setSelectedDept('CS department')}>
-                <Cpu size={18} />
-                <span>CS</span>
-              </div>
-              <div className={`nav-item ${selectedDept === 'Management department' ? 'active' : ''}`} onClick={() => setSelectedDept('Management department')}>
-                <Briefcase size={18} />
-                <span>Management</span>
-              </div>
-              <div className={`nav-item ${selectedDept === 'Science department' ? 'active' : ''}`} onClick={() => setSelectedDept('Science department')}>
-                <FlaskConical size={18} />
-                <span>Science</span>
-              </div>
+              {departments.map(dept => (
+                <div key={dept} className={`nav-item ${selectedDept === dept ? 'active' : ''}`} onClick={() => setSelectedDept(dept)}>
+                  {dept.includes('Maths') && <Calculator size={18} />}
+                  {dept.includes('CS') && <Cpu size={18} />}
+                  {dept.includes('Management') && <Briefcase size={18} />}
+                  {dept.includes('Science') && <FlaskConical size={18} />}
+                  {dept === 'Other' && <MoreVertical size={18} />}
+                  <span>{dept.replace(' department', '')}</span>
+                </div>
+              ))}
             </div>
           )}
-
-          <div className="mt-auto p-4 border-t border-slate-200">
-             <div className="flex items-center justify-between group">
-               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Core Engine</span>
-               <div className="w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-             </div>
-             <p className="text-[10px] text-slate-400 mt-1 leading-tight">Naive Bayes Active</p>
-          </div>
         </aside>
 
         {/* Content Area */}
         <main className="gmail-content">
-          {activeTab === 'about' ? (
-            <div className="p-12 overflow-y-auto max-w-3xl mx-auto">
-              <h1 className="text-4xl font-black text-slate-800 mb-6 tracking-tight">How our Bayes Classifier works.</h1>
-              <div className="space-y-8 text-slate-600 leading-relaxed">
-                <section>
-                  <h3 className="text-lg font-bold text-slate-700 mb-2">1. Probabilistic Frequency (Naive Bayes)</h3>
-                  <p>Our core algorithm uses the Naive Bayes theorem to calculate the probability of a message being spam based on token frequency. We analyze keywords like "Urgent," "Prize," and "Link" to determine the likelihood of a malicious intent.</p>
-                </section>
-                <section>
-                  <h3 className="text-lg font-bold text-slate-700 mb-2">2. Ollama Open Source LLM Hybrid</h3>
-                  <p>To enhance accuracy, we use <strong>Ollama</strong> (an open-source large language model runner) to understand the semantic context of your emails. This ensures that a "Prize" mention in a professional context (like an award) isn't marked as spam.</p>
-                </section>
-                <section>
-                  <h3 className="text-lg font-bold text-slate-700 mb-2">3. Privacy First Architecture</h3>
-                  <p>All analysis is done using stateless sessions. Your data is scanned for patterns and then discarded immediately after classification.</p>
-                </section>
-              </div>
-              <button 
-                onClick={() => setActiveTab('inbox')}
-                className="mt-12 px-8 py-4 bg-slate-800 text-white font-bold rounded-2xl hover:bg-slate-700 transition-all"
-              >
-                GO TO INBOX
-              </button>
-            </div>
-          ) : activeTab === 'manual' ? (
-            <div className="p-8 h-full flex flex-col">
-              <div className="bg-slate-50 border rounded-3xl p-8 flex-1 flex flex-col items-center justify-center">
-                <div className="w-full max-w-xl text-center">
-                  <MailSearch size={48} className="text-blue-600 mx-auto mb-6" />
-                  <h2 className="text-2xl font-black text-slate-800 mb-2">Manual Pattern Scan</h2>
-                  <p className="text-sm text-slate-500 mb-8">Paste suspected text below to test our Naive Bayes classifier.</p>
-                  
-                  <textarea 
-                    className="w-full h-48 p-6 bg-white border border-slate-200 rounded-2xl outline-none focus:border-blue-500 transition-all text-sm mb-6 shadow-inner"
-                    placeholder="Paste message content here..."
-                    value={manualText}
-                    onChange={(e) => setManualText(e.target.value)}
-                  />
+          <div className="flex items-center px-4 h-12 border-b gap-4 bg-white sticky top-0 z-[40]">
+             <div className="flex items-center gap-4">
+                <button onClick={toggleSelectAll} className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
+                  {selectedMessageIds.length === filteredMessages.length && filteredMessages.length > 0 
+                  ? <CheckSquare size={18} className="text-blue-600" /> 
+                  : <Square size={18} />}
+                </button>
+             </div>
 
-                  <button 
-                    onClick={manualCheck}
-                    disabled={isManualChecking || !manualText}
-                    className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-500/20"
+             <AnimatePresence mode="wait">
+               {selectedMessageIds.length > 0 ? (
+                 <motion.div 
+                   key="bulk-actions"
+                   initial={{ opacity: 0, y: -10 }} 
+                   animate={{ opacity: 1, y: 0 }} 
+                   exit={{ opacity: 0, y: -10 }}
+                   className="flex items-center gap-2 flex-1"
+                 >
+                   <span className="text-xs font-bold text-blue-600 mr-2">{selectedMessageIds.length} Selected</span>
+                   
+                   <button 
+                     onClick={() => bulkUpdate({ label: activeTab === 'inbox' ? 'spam' : 'not spam' })}
+                     className="p-2 hover:bg-slate-100 rounded-lg text-slate-600" 
+                     title={activeTab === 'inbox' ? "Mark as Spam" : "Mark as Not Spam"}
+                   >
+                     {activeTab === 'inbox' ? <Trash2 size={18} /> : <Inbox size={18} />}
+                   </button>
+
+                   <div className="relative">
+                     <button 
+                       onClick={() => setShowBulkDeptDropdown(!showBulkDeptDropdown)}
+                       className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-600 transition-all border border-slate-200"
+                     >
+                       <Briefcase size={14} /> Categorize <ChevronDown size={14} />
+                     </button>
+                     <AnimatePresence>
+                       {showBulkDeptDropdown && (
+                         <motion.div 
+                           initial={{ opacity: 0, scale: 0.95, y: 5 }} 
+                           animate={{ opacity: 1, scale: 1, y: 0 }} 
+                           exit={{ opacity: 0, scale: 0.95, y: 5 }}
+                           className="absolute left-0 top-full mt-2 bg-white shadow-2xl rounded-2xl border p-2 z-[100] min-w-[180px]"
+                         >
+                           {departments.map(dept => (
+                             <button
+                               key={dept}
+                               onClick={() => bulkUpdate({ department: dept })}
+                               className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl transition-colors flex items-center gap-3"
+                             >
+                               <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
+                               {dept.replace(' department', '')}
+                             </button>
+                           ))}
+                         </motion.div>
+                       )}
+                     </AnimatePresence>
+                   </div>
+
+                   <button onClick={() => setSelectedMessageIds([])} className="text-xs font-bold text-slate-400 hover:text-slate-600 ml-auto">DESELECT ALL</button>
+                 </motion.div>
+               ) : (
+                 <motion.div 
+                   key="regular-actions"
+                   initial={{ opacity: 0 }} 
+                   animate={{ opacity: 1 }}
+                   className="flex items-center gap-4 flex-1"
+                 >
+                   <button onClick={fetchMessages} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full"><RefreshCcw size={18} /></button>
+                   {isSyncing && (
+                     <div className="flex-1 flex items-center gap-4 px-4">
+                        <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
+                          <motion.div className="h-full bg-blue-600" initial={{ width: 0 }} animate={{ width: `${syncProgress}%` }} />
+                        </div>
+                        <span className="text-[10px] font-black text-blue-600">{syncProgress}%</span>
+                     </div>
+                   )}
+                   <button 
+                     onClick={() => { if(window.confirm('Clear all labels?')) axios.delete(`${API_URL}/messages`).then(()=>setMessages([])) }} 
+                     className="p-2 text-slate-400 hover:text-red-500 ml-auto"
+                   >
+                     <Trash size={18} />
+                   </button>
+                 </motion.div>
+               )}
+             </AnimatePresence>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {isLoading ? (
+              <div className="h-full flex flex-col items-center justify-center opacity-30">
+                <Loader2 size={32} className="animate-spin text-blue-600 mb-2" />
+                <span className="text-xs font-bold uppercase tracking-widest">Scanning Emails...</span>
+              </div>
+            ) : filteredMessages.length === 0 ? (
+               <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                 <MailSearch size={48} className="opacity-20 mb-4" />
+                 <p className="text-sm">No messages found here.</p>
+               </div>
+            ) : (
+                filteredMessages.map((msg) => (
+                  <div 
+                    key={msg._id} 
+                    className={`email-row group ${msg.label === 'spam' ? 'spam' : ''} ${selectedMessageIds.includes(msg._id) ? 'bg-blue-50' : ''}`} 
+                    onClick={() => setSelectedMessage(msg)}
                   >
-                    {isManualChecking ? 'ANALYZING PATTERNS...' : 'CHECK FOR SPAM'}
-                  </button>
-
-                  <AnimatePresence>
-                    {manualResult && (
-                      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className={`mt-8 p-6 rounded-2xl border ${manualResult.label === 'spam' ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
-                        <div className="flex flex-col gap-2 mb-4">
-                           <div className="flex items-center justify-between">
-                              <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${manualResult.label === 'spam' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                                {manualResult.label} DETECTED
-                              </span>
-                              <span className="text-sm font-bold text-slate-600">{manualResult.confidence}% Confidence</span>
-                           </div>
-                           <div className="flex items-center gap-2">
-                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Classification:</span>
-                             <span className="px-3 py-0.5 rounded-full bg-blue-100 text-blue-600 text-[10px] font-black uppercase">{manualResult.department || 'Other'}</span>
-                           </div>
-                        </div>
-                        <p className="text-xs text-left text-slate-500 font-medium leading-relaxed italic">
-                          <span className="font-bold text-slate-700">Bayes Reason:</span> {manualResult.reason}
-                        </p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center px-4 h-12 border-b gap-4">
-                 <button onClick={fetchMessages} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full" title="Refresh list">
-                   <RefreshCcw size={18} />
-                 </button>
-                 {isSyncing && (
-                   <div className="flex-1 flex items-center gap-4 px-4">
-                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <motion.div 
-                          className="h-full bg-blue-600" 
-                          initial={{ width: 0 }} 
-                          animate={{ width: `${syncProgress}%` }}
-                        />
+                    <div className="flex items-center gap-3 w-[200px] shrink-0">
+                      <div className="flex items-center gap-3">
+                         <button 
+                           onClick={(e) => toggleSelect(e, msg._id)} 
+                           className={`p-1 hover:bg-slate-200 rounded transition-colors ${selectedMessageIds.includes(msg._id) ? 'text-blue-600' : 'text-slate-300'}`}
+                         >
+                           {selectedMessageIds.includes(msg._id) ? <CheckSquare size={16} /> : <Square size={16} />}
+                         </button>
+                         {msg.label === 'spam' ? <ShieldAlert size={16} className="text-red-500" /> : <ShieldCheck size={16} className="text-green-500" />}
                       </div>
-                      <span className="text-[10px] font-black text-blue-600 uppercase w-12">{syncProgress}%</span>
-                   </div>
-                 )}
-                 <button onClick={() => { if(window.confirm('Clear all labels?')) axios.delete(`${API_URL}/messages`).then(()=>setMessages([])) }} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full ml-auto">
-                   <Trash size={18} />
-                 </button>
-              </div>
+                      <span className="truncate font-medium">{msg.text.split('\n\n')[0].replace('Subject: ', '').substring(0, 20)}...</span>
+                    </div>
+                    
+                    <div className="flex-1 min-w-0 pr-8">
+                      <span className="subject-text">{msg.text.split('\n\n')[0].replace('Subject: ', '')}</span>
+                      <span className="snippet-text"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 100)}...</span>
+                    </div>
 
-              <div className="flex-1 overflow-y-auto">
-                {isLoading ? (
-                  <div className="h-full flex flex-col items-center justify-center opacity-30">
-                    <Loader2 size={32} className="animate-spin text-blue-600 mb-2" />
-                    <span className="text-xs font-bold uppercase tracking-widest">Scanning Emails...</span>
-                  </div>
-                ) : filteredMessages.length === 0 ? (
-                   <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                     <MailSearch size={48} className="opacity-20 mb-4" />
-                     <p className="text-sm">Inbox is clean! All clear.</p>
-                   </div>
-                ) : (
-                    filteredMessages.map((msg) => (
-                      <div key={msg._id} className={`email-row group ${msg.label === 'spam' ? 'spam' : ''}`} onClick={() => setSelectedMessage(msg)}>
-                        <div className="flex items-center gap-3 w-[200px] shrink-0">
-                          {msg.label === 'spam' ? <ShieldAlert size={16} className="text-red-500" /> : <ShieldCheck size={16} className="text-green-500" />}
-                          <span className="truncate font-medium">{msg.text.split('\n\n')[0].replace('Subject: ', '').substring(0, 20)}...</span>
-                        </div>
-                        
-                        <div className="flex-1 min-w-0 pr-8">
-                          <span className="subject-text">{msg.text.split('\n\n')[0].replace('Subject: ', '')}</span>
-                          <span className="snippet-text"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 100)}...</span>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div className="hidden group-hover:flex items-center gap-1 mr-4">
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }}
-                              className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-all"
-                              title={msg.label === 'spam' ? 'Mark as Not Spam' : 'Mark as Spam'}
-                            >
-                              {msg.label === 'spam' ? <Inbox size={14} /> : <Trash2 size={14} />}
-                            </button>
-                            <div className="relative group/dept">
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); }}
-                                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 transition-all"
-                                title="Quick Categorize"
-                              >
-                                <Briefcase size={14} />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="hidden group-hover:flex items-center gap-1 mr-4">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }}
+                          className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500"
+                        >
+                          {msg.label === 'spam' ? <Inbox size={14} /> : <Trash2 size={14} />}
+                        </button>
+                        <div className="relative group/dept">
+                          <button onClick={(e) => { e.stopPropagation(); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500"><Briefcase size={14} /></button>
+                          <div className="absolute right-0 bottom-full mb-2 hidden group-hover/dept:block bg-white shadow-xl border rounded-xl p-1 z-[60] min-w-[140px]">
+                            {departments.map(dept => (
+                              <button key={dept} onClick={(e) => { e.stopPropagation(); updateDepartment(msg._id, dept); }} className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-50 rounded-lg">
+                                {dept.replace(' department', '')}
                               </button>
-                              <div className="absolute right-0 bottom-full mb-2 hidden group-hover/dept:block bg-white shadow-xl border rounded-xl p-1 z-[60] min-w-[140px]">
-                                {departments.map(dept => (
-                                  <button
-                                    key={dept}
-                                    onClick={(e) => { e.stopPropagation(); updateDepartment(msg._id, dept); }}
-                                    className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-50 rounded-lg"
-                                  >
-                                    {dept.replace(' department', '')}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="flex flex-col items-end mr-4">
-                             <div className="flex items-center gap-2">
-                               <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[8px] font-black uppercase tracking-tight">
-                                 {msg.department || 'Other'}
-                               </span>
-                               <span className={`badge ${msg.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>{Math.round(msg.confidence)}% N.B</span>
-                             </div>
-                             <span className="text-[10px] text-slate-400">{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            ))}
                           </div>
                         </div>
                       </div>
-                    ))
-                )}
-              </div>
-            </>
-          )}
+                      <div className="flex flex-col items-end mr-4">
+                         <div className="flex items-center gap-2">
+                           <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[8px] font-black uppercase">{msg.department || 'Other'}</span>
+                           <span className={`badge ${msg.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>{Math.round(msg.confidence)}%</span>
+                         </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
         </main>
       </div>
-
-      {/* Settings Modal (Updated) */}
-      <AnimatePresence>
-        {showSettings && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSettings(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="relative bg-white w-full max-w-md rounded-2xl p-8 shadow-2xl border">
-              <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-                <Settings className="text-slate-400" />
-                Classifier Settings
-              </h2>
-              
-              <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex justify-between">
-                    Scan Depth (Results)
-                    <span className="text-blue-600">{syncLimit} emails</span>
-                  </label>
-                  <input 
-                    type="range" 
-                    min="5" 
-                    max="50" 
-                    value={syncLimit} 
-                    onChange={(e) => setSyncLimit(e.target.value)} 
-                    className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                  />
-                  <div className="flex justify-between mt-1">
-                    <span className="text-[8px] text-slate-400 font-bold">MIN: 5</span>
-                    <span className="text-[8px] text-slate-400 font-bold">MAX: 50</span>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Model Auth Overrides</p>
-                   <input 
-                      type="password"
-                      placeholder="Bayes Cloud Key (Saved Locally)"
-                      value={geminiKey}
-                      onChange={(e) => setGeminiKey(e.target.value)}
-                      className="w-full py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm"
-                   />
-                   <input 
-                      type="password"
-                      placeholder="Groq API Key (Saved Locally)"
-                      value={groqKey}
-                      onChange={(e) => setGroqKey(e.target.value)}
-                      className="w-full py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm"
-                   />
-                   <input 
-                      type="password"
-                      placeholder="OpenAI API Key (Saved Locally)"
-                      value={openAIKey}
-                      onChange={(e) => setOpenAIKey(e.target.value)}
-                      className="w-full py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl outline-none text-sm"
-                   />
-                </div>
-
-                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                   <p className="text-[10px] text-blue-700 leading-relaxed font-bold uppercase tracking-tight">
-                     Core Engine: Ollama / Naive Bayes Custom 1.0
-                   </p>
-                </div>
-              </div>
-
-              <button onClick={() => setShowSettings(false)} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl transition-all shadow-lg shadow-blue-500/20 mt-6">
-                SAVE CONFIGURATION
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Message Detail Modal */}
-      <AnimatePresence>
-        {selectedMessage && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedMessage(null)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-              {/* Modal Header */}
-              <div className="px-8 py-6 border-b flex justify-between items-start bg-slate-50">
-                 <div>
-                    <div className="flex items-center gap-2 mb-2">
-                       <span className={`badge ${selectedMessage.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>
-                         {selectedMessage.label}
-                       </span>
-                       <span className="text-[10px] text-slate-400 font-mono">
-                         ID: {selectedMessage.gmailId}
-                       </span>
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-800 leading-tight">
-                      {selectedMessage.text.split('\n\n')[0].replace('Subject: ', '')}
-                    </h2>
-                 </div>
-                 <button onClick={() => setSelectedMessage(null)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                    <XCircle size={24} className="text-slate-400" />
-                 </button>
-              </div>
-
-              {/* Modal Body */}
-              <div className="flex-1 overflow-y-auto p-8 space-y-8">
-                 {/* Email Content Section */}
-                 <section>
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4">Message Snippet</label>
-                    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100 italic text-slate-700 leading-relaxed">
-                       {selectedMessage.text.split('\n\n')[1] || "No snippet available"}
-                    </div>
-                 </section>
-
-                 {/* AI Analysis Section */}
-                 <section className="bg-blue-50/30 p-6 rounded-2xl border border-blue-100">
-                    <div className="flex items-center gap-2 mb-4">
-                       <Sparkles className="text-blue-500" size={18} />
-                       <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0">AI Intelligence Log</label>
-                    </div>
-                    <div className="space-y-4">
-                       <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-blue-50">
-                          <span className="text-xs text-slate-500">Department</span>
-                          <div className="flex items-center gap-2">
-                             {selectedMessage.department === 'Maths department' && <Calculator size={14} className="text-blue-600" />}
-                             {selectedMessage.department === 'CS department' && <Cpu size={14} className="text-blue-600" />}
-                             {selectedMessage.department === 'Management department' && <Briefcase size={14} className="text-blue-600" />}
-                             {selectedMessage.department === 'Science department' && <FlaskConical size={14} className="text-blue-600" />}
-                             {(selectedMessage.department === 'Other' || !selectedMessage.department) && <Layers size={14} className="text-blue-600" />}
-                             <span className="text-sm font-black text-blue-600">{selectedMessage.department || 'Other'}</span>
-                          </div>
-                       </div>
-                       <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-blue-50">
-                          <span className="text-xs text-slate-500">Confidence Score</span>
-                          <span className="text-sm font-black text-blue-600">{Math.round(selectedMessage.confidence)}%</span>
-                       </div>
-                       <p className="text-sm text-slate-700 font-medium">
-                          <span className="font-bold text-blue-600 mr-2">Reason:</span>
-                          {selectedMessage.reason}
-                       </p>
-                    </div>
-
-                    <div className="mt-6 pt-6 border-t border-blue-100">
-                      <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest block mb-3">Re-categorize Department</label>
-                      <div className="flex flex-wrap gap-2">
-                        {departments.map(dept => (
-                          <button
-                            key={dept}
-                            onClick={() => updateDepartment(selectedMessage._id, dept)}
-                            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all border ${
-                              selectedMessage.department === dept 
-                              ? 'bg-blue-600 text-white border-blue-600' 
-                              : 'bg-white text-slate-500 border-slate-200 hover:border-blue-400'
-                            }`}
-                          >
-                            {dept.replace(' department', '')}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                 </section>
-              </div>
-
-              {/* Modal Footer */}
-              <div className="px-8 py-4 border-t bg-slate-50 flex justify-end gap-3">
-                 <button onClick={() => setSelectedMessage(null)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:text-slate-800 transition-colors">
-                    Close
-                 </button>
-                 {selectedMessage.label === 'spam' ? (
-                   <button 
-                     onClick={() => { updateLabel(selectedMessage._id, 'not spam'); setSelectedMessage(null); }} 
-                     className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg"
-                   >
-                     Move to Inbox
-                   </button>
-                 ) : (
-                   <button 
-                     onClick={() => { updateLabel(selectedMessage._id, 'spam'); setSelectedMessage(null); }} 
-                     className="px-6 py-2.5 bg-red-600 text-white text-sm font-bold rounded-xl hover:bg-red-700 transition-all shadow-lg"
-                   >
-                     Mark as Spam
-                   </button>
-                 )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* API Limit Modal */}
       <AnimatePresence>
@@ -747,12 +539,10 @@ function App() {
                 <AlertCircle className="text-amber-600" size={32} />
               </div>
               <h3 className="text-xl font-black text-slate-800 mb-2">API LIMIT REACHED</h3>
-              <p className="text-sm text-slate-500 mb-8 leading-relaxed">
-                You've hit the Google API or Model quota. Please wait a few minutes before syncing again.
-              </p>
+              <p className="text-sm text-slate-500 mb-8 leading-relaxed">Please wait a few minutes before syncing again.</p>
               <button 
                 onClick={() => setShowLimitModal(false)}
-                className="w-full py-4 bg-slate-800 text-white font-black rounded-2xl hover:bg-slate-700 transition-all"
+                className="w-full py-4 bg-slate-800 text-white font-black rounded-2xl"
               >
                 UNDERSTOOD
               </button>
@@ -761,10 +551,57 @@ function App() {
         )}
       </AnimatePresence>
 
+      {/* Message Detail Modal (Shortened for brevity but preserves core logic) */}
+      <AnimatePresence>
+        {selectedMessage && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedMessage(null)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+              <div className="px-8 py-6 border-b flex justify-between items-start bg-slate-50">
+                 <div>
+                    <span className={`badge ${selectedMessage.label === 'spam' ? 'badge-spam' : 'badge-safe'} mb-2 inline-block`}>{selectedMessage.label}</span>
+                    <h2 className="text-xl font-bold text-slate-800">{selectedMessage.text.split('\n\n')[0].replace('Subject: ', '')}</h2>
+                 </div>
+                 <button onClick={() => setSelectedMessage(null)}><XCircle size={24} className="text-slate-400" /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                 <section>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4">Snippet</label>
+                    <div className="p-6 bg-slate-50 rounded-2xl border italic text-slate-700 leading-relaxed">{selectedMessage.text.split('\n\n')[1]}</div>
+                 </section>
+                 <section className="bg-blue-50/30 p-6 rounded-2xl border border-blue-100">
+                    <div className="flex items-center gap-2 mb-4"><Sparkles className="text-blue-500" size={18} /><label className="text-[10px] font-black text-blue-500 uppercase">AI Intelligence</label></div>
+                    <div className="space-y-4">
+                       <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-blue-50">
+                          <span className="text-xs text-slate-500">Department</span>
+                          <span className="text-sm font-black text-blue-600">{selectedMessage.department}</span>
+                       </div>
+                       <p className="text-sm text-slate-700 font-medium"><span className="font-bold text-blue-600 mr-2">Reason:</span>{selectedMessage.reason}</p>
+                    </div>
+                    <div className="mt-6 pt-6 border-t border-blue-100">
+                      <label className="text-[10px] font-black text-blue-500 uppercase block mb-3">Re-categorize</label>
+                      <div className="flex flex-wrap gap-2">
+                        {departments.map(dept => (
+                          <button key={dept} onClick={() => updateDepartment(selectedMessage._id, dept)} className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border ${selectedMessage.department === dept ? 'bg-blue-600 text-white' : 'bg-white text-slate-500'}`}>{dept.replace(' department', '')}</button>
+                        ))}
+                      </div>
+                    </div>
+                 </section>
+              </div>
+              <div className="px-8 py-4 border-t bg-slate-50 flex justify-end gap-3">
+                 <button onClick={() => setSelectedMessage(null)} className="px-6 py-2.5 text-sm font-bold text-slate-600">Close</button>
+                 <button onClick={() => { updateLabel(selectedMessage._id, selectedMessage.label === 'spam' ? 'not spam' : 'spam'); setSelectedMessage(null); }} className={`px-6 py-2.5 text-sm font-bold text-white rounded-xl ${selectedMessage.label === 'spam' ? 'bg-blue-600' : 'bg-red-600'}`}>
+                   {selectedMessage.label === 'spam' ? 'Move to Inbox' : 'Mark as Spam'}
+                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <style dangerouslySetInnerHTML={{ __html: `
-        .email-row:hover .group {
-          opacity: 1 !important;
-        }
+        .email-row:hover .group { opacity: 1 !important; }
+        .email-row.bg-blue-50 { border-left: 3px solid #2563eb; }
       `}} />
     </div>
   );
