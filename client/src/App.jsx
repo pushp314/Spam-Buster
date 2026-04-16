@@ -36,7 +36,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
 
-const API_URL = 'http://localhost:5001/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 axios.defaults.withCredentials = true;
 
 function App() {
@@ -56,7 +56,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [showProfileDetail, setShowProfileDetail] = useState(false);
-  const [syncLimit, setSyncLimit] = useState(15);
+  const [syncLimit, setSyncLimit] = useState(50);
   const [syncProgress, setSyncProgress] = useState(0);
   const [manualText, setManualText] = useState('');
   const [manualResult, setManualResult] = useState(null);
@@ -66,6 +66,7 @@ function App() {
   const [selectedMessageIds, setSelectedMessageIds] = useState([]);
   const [showBulkDeptDropdown, setShowBulkDeptDropdown] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [showNoSpamModal, setShowNoSpamModal] = useState(false);
 
   const addToast = (message, type = 'success') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -174,23 +175,43 @@ function App() {
     setIsSyncing(true);
     setSyncProgress(10);
     try {
-      const interval = setInterval(() => setSyncProgress(p => p < 90 ? p + 5 : p), 500);
-      await axios.get(`${API_URL}/gmail/sync`, { 
+      const { data } = await axios.get(`${API_URL}/gmail/sync`, { 
         params: { 
           model: selectedModel, 
           groqKey, openAIKey, geminiKey,
           limit: syncLimit
         } 
       });
-      clearInterval(interval);
-      setSyncProgress(100);
-      addToast('Inbox synced successfully');
-      fetchMessages();
+
+      if (data.success) {
+        addToast('Sync job added to queue');
+        let progress = 10;
+        const interval = setInterval(async () => {
+          progress += 5;
+          if (progress >= 95) {
+            clearInterval(interval);
+            setIsSyncing(false);
+            setSyncProgress(0);
+            
+            const { data: updatedMessages } = await axios.get(`${API_URL}/messages`);
+            setMessages(updatedMessages);
+            
+            const spamRecords = updatedMessages.filter(m => m.label === 'spam');
+            if (spamRecords.length === 0) {
+              setShowNoSpamModal(true);
+            } else {
+              addToast(`Sync complete. Found ${spamRecords.length} spam messages.`);
+            }
+          } else {
+            setSyncProgress(progress);
+          }
+        }, 800);
+      }
     } catch (err) {
       if (err.response?.status === 429) setShowLimitModal(true);
-      else addToast('Sync failed', 'error');
-    } finally {
-      setTimeout(() => { setIsSyncing(false); setSyncProgress(0); }, 500);
+      else addToast('Queueing sync failed', 'error');
+      setIsSyncing(false);
+      setSyncProgress(0);
     }
   };
 
@@ -211,9 +232,19 @@ function App() {
   };
 
   const filteredMessages = messages
-    .filter((msg) => activeTab === 'inbox' ? msg.label !== 'spam' : msg.label === 'spam')
+    .filter((msg) => {
+      // If user is in the Spam Vault tab, ALWAYS show only spam
+      if (activeTab === 'spam') return msg.label === 'spam';
+      // If user is in Manual Scan or Maths Guide, navigation handles it, 
+      // but for email tabs:
+      if (activeTab === 'inbox') {
+        if (selectedDept === 'All') return true; // "All Mail" shows everything
+        return msg.label !== 'spam'; // Other inbox categories hide spam by default
+      }
+      return true;
+    })
     .filter((msg) => selectedDept === 'All' || msg.department === selectedDept)
-    .filter((msg) => msg.text.toLowerCase().includes(searchQuery.toLowerCase()));
+    .filter((msg) => msg.text?.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const toggleSelectAll = () => {
     setSelectedMessageIds(selectedMessageIds.length === filteredMessages.length ? [] : filteredMessages.map(m => m._id));
@@ -345,17 +376,17 @@ function App() {
                  <AnimatePresence mode="wait">
                     {selectedMessageIds.length > 0 ? (
                       <motion.div key="bulk" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-3">
-                        <span className="text-xs font-bold text-blue-600">{selectedMessageIds.length} Selected</span>
-                        <button onClick={() => bulkUpdate({ label: activeTab === 'inbox' ? 'spam' : 'not spam' })} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">{activeTab === 'inbox' ? <Trash2 size={18} /> : <Inbox size={18} />}</button>
-                        <div className="relative">
-                           <button onClick={() => setShowBulkDeptDropdown(!showBulkDeptDropdown)} className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-600 border border-slate-200">Categorize <ChevronDown size={14} /></button>
-                           {showBulkDeptDropdown && (
-                             <div className="absolute left-0 top-full mt-2 bg-white shadow-2xl rounded-2xl border p-2 z-[100] min-w-[180px]">
-                               {departments.map(dept => <button key={dept} onClick={() => bulkUpdate({ department: dept })} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl">{dept.replace(' department', '')}</button>)}
-                             </div>
-                           )}
-                        </div>
-                        <button onClick={() => setSelectedMessageIds([])} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">CLEAR</button>
+                         <span className="text-xs font-bold text-blue-600">{selectedMessageIds.length} Selected</span>
+                         <button onClick={() => bulkUpdate({ label: activeTab === 'inbox' ? 'spam' : 'not spam' })} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">{activeTab === 'inbox' ? <Trash2 size={18} /> : <Inbox size={18} />}</button>
+                         <div className="relative">
+                            <button onClick={() => setShowBulkDeptDropdown(!showBulkDeptDropdown)} className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-600 border border-slate-200">Categorize <ChevronDown size={14} /></button>
+                            {showBulkDeptDropdown && (
+                              <div className="absolute left-0 top-full mt-2 bg-white shadow-2xl rounded-2xl border p-2 z-[100] min-w-[180px]">
+                                {departments.map(dept => <button key={dept} onClick={() => bulkUpdate({ department: dept })} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl">{dept.replace(' department', '')}</button>)}
+                              </div>
+                            )}
+                         </div>
+                         <button onClick={() => setSelectedMessageIds([])} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">CLEAR</button>
                       </motion.div>
                     ) : (
                       <div className="flex items-center gap-4">
@@ -374,9 +405,9 @@ function App() {
                       <div className="flex items-center gap-3 w-48 shrink-0">
                          <button onClick={(e) => toggleSelect(e, msg._id)} className={`p-1 ${selectedMessageIds.includes(msg._id) ? 'text-blue-600' : 'text-slate-300'}`}>{selectedMessageIds.includes(msg._id) ? <CheckSquare size={16} /> : <Square size={16} />}</button>
                          {msg.label === 'spam' ? <ShieldAlert size={16} className="text-red-500" /> : <ShieldCheck size={16} className="text-green-500" />}
-                         <span className="truncate text-xs font-bold">{msg.text.split('\n\n')[0].replace('Subject: ', '').substring(0, 15)}</span>
+                         <span className="truncate text-xs font-bold">{msg.text?.split('\n\n')?.[0]?.replace('Subject: ', '')?.substring(0, 15) || 'No Subject'}</span>
                       </div>
-                      <div className="flex-1 min-w-0 px-4 truncate"><span className="text-slate-800 font-medium">{msg.text.split('\n\n')[0].replace('Subject: ', '')}</span><span className="text-slate-400"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 80)}...</span></div>
+                      <div className="flex-1 min-w-0 px-4 truncate"><span className="text-slate-800 font-medium">{msg.text?.split('\n\n')?.[0]?.replace('Subject: ', '') || 'Untitled'}</span><span className="text-slate-400"> - {msg.snippet || msg.text?.split('\n\n')?.[1]?.substring(0, 80) || 'No content preview'}...</span></div>
                       <div className="hidden group-hover:flex items-center gap-1 mr-4">
                         <button onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500">{msg.label === 'spam' ? <Inbox size={14} /> : <Trash2 size={14} />}</button>
                         <div className="relative group/dept">
@@ -403,7 +434,7 @@ function App() {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="relative bg-white w-full max-w-md rounded-2xl p-8 border">
               <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><Settings size={20} /> Settings</h2>
               <div className="space-y-6">
-                <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-2">Scan Depth: {syncLimit} emails</label><input type="range" min="5" max="50" value={syncLimit} onChange={(e) => setSyncLimit(e.target.value)} className="w-full h-1.5 bg-slate-100 rounded-lg accent-blue-600" /></div>
+                <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-2">Scan Depth: {syncLimit} emails</label><input type="range" min="5" max="500" value={syncLimit} onChange={(e) => setSyncLimit(e.target.value)} className="w-full h-1.5 bg-slate-100 rounded-lg accent-blue-600" /></div>
                 <div className="space-y-3">
                   <input type="password" placeholder="Gemini Key" value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} className="w-full py-3 px-4 bg-slate-50 border rounded-xl text-sm" />
                   <input type="password" placeholder="Groq Key" value={groqKey} onChange={(e) => setGroqKey(e.target.value)} className="w-full py-3 px-4 bg-slate-50 border rounded-xl text-sm" />
@@ -421,16 +452,16 @@ function App() {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedMessage(null)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
               <div className="px-8 py-6 border-b flex justify-between bg-slate-50">
-                 <div><span className={`badge ${selectedMessage.label === 'spam' ? 'badge-spam' : 'badge-safe'} mb-2 inline-block`}>{selectedMessage.label}</span><h2 className="text-xl font-bold">{selectedMessage.text.split('\n\n')[0].replace('Subject: ', '')}</h2></div>
+                 <div><span className={`badge ${selectedMessage.label === 'spam' ? 'badge-spam' : 'badge-safe'} mb-2 inline-block`}>{selectedMessage.label}</span><h2 className="text-xl font-bold">{selectedMessage.text?.split('\n\n')?.[0]?.replace('Subject: ', '') || 'No Subject'}</h2></div>
                  <button onClick={() => setSelectedMessage(null)}><XCircle size={24} className="text-slate-400" /></button>
               </div>
               <div className="p-8 space-y-6 overflow-y-auto">
-                 <section><label className="text-[10px] font-black uppercase text-slate-400">Content</label><div className="p-6 bg-slate-50 border rounded-2xl italic text-sm text-slate-600">{selectedMessage.text.split('\n\n')[1]}</div></section>
+                 <section><label className="text-[10px] font-black uppercase text-slate-400">Content</label><div className="p-6 bg-slate-50 border rounded-2xl italic text-sm text-slate-600">{selectedMessage.text?.split('\n\n')?.[1] || 'No content'}</div></section>
                  <section className="p-6 bg-blue-50/50 rounded-2xl border border-blue-100">
                     <div className="flex items-center gap-2 mb-4"><Sparkles className="text-blue-500" size={16} /><label className="text-[10px] font-black uppercase text-blue-500">AI Log</label></div>
                     <div className="space-y-4">
-                       <div className="flex justify-between text-sm font-bold"><span>Confidence</span><span className="text-blue-600">{Math.round(selectedMessage.confidence)}%</span></div>
-                       <p className="text-sm text-slate-600"><strong>Reason:</strong> {selectedMessage.reason}</p>
+                       <div className="flex justify-between text-sm font-bold"><span>Confidence</span><span className="text-blue-600">{Math.round(selectedMessage?.confidence || 0)}%</span></div>
+                       <p className="text-sm text-slate-600"><strong>Reason:</strong> {selectedMessage?.reason || 'No analysis reason provided'}</p>
                        <div className="mt-4 pt-4 border-t border-blue-100 flex flex-wrap gap-2">
                           {departments.map(dept => <button key={dept} onClick={() => updateDepartment(selectedMessage._id, dept)} className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-colors ${selectedMessage.department === dept ? 'bg-blue-600 text-white' : 'bg-white hover:border-blue-400'}`}>{dept.replace(' department', '')}</button>)}
                        </div>
@@ -440,6 +471,22 @@ function App() {
               <div className="px-8 py-4 border-t bg-slate-50 flex justify-end gap-3">
                  <button onClick={() => selectedMessage.label === 'spam' ? updateLabel(selectedMessage._id, 'not spam') : updateLabel(selectedMessage._id, 'spam')} className={`px-6 py-2.5 text-sm font-bold text-white rounded-xl ${selectedMessage.label === 'spam' ? 'bg-blue-600' : 'bg-red-600'}`}>{selectedMessage.label === 'spam' ? 'Move to Inbox' : 'Mark as Spam'}</button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showNoSpamModal && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowNoSpamModal(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="relative bg-white w-full max-w-sm rounded-[32px] p-10 text-center shadow-2xl border border-slate-100">
+               <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <ShieldCheck size={40} className="text-green-500" />
+               </div>
+               <h3 className="text-2xl font-black text-slate-800 mb-2">Vault secure.</h3>
+               <p className="text-slate-500 text-sm mb-8 leading-relaxed">Our Bayesian engine scanned your inbox and found <b>zero</b> spam patterns. You're all clear!</p>
+               <button onClick={() => setShowNoSpamModal(false)} className="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/20">GREAT NEWS</button>
             </motion.div>
           </div>
         )}

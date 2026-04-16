@@ -2,55 +2,64 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const { google } = require('googleapis');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Groq = require('groq-sdk');
-const OpenAI = require('openai');
+const helmet = require('helmet');
+const compression = require('compression');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 const cookieSession = require('cookie-session');
+const { google } = require('googleapis');
 const Message = require('./models/Message');
+const { emailQueue } = require('./config/queue');
+const { classifyMessage } = require('./utils/classifier');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
-// Middleware
-app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
+// Security & Performance Middlewares
+app.use(helmet());
+app.use(compression());
+app.use(morgan('dev'));
+app.use(cors({ origin: CLIENT_URL, credentials: true }));
 app.use(express.json());
+
+// Global Rate Limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', apiLimiter);
+
+// Session Stability
 app.use(cookieSession({
   name: 'session',
-  keys: [process.env.SESSION_SECRET || 'secret'],
-  maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  keys: [process.env.SESSION_SECRET || 'secret_key_needs_replacement'],
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week
+  secure: process.env.NODE_ENV === 'production',
+  httpOnly: true,
+  sameSite: 'lax',
 }));
 
-// MongoDB Connection
+// Database Stability
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/spam-buster', {
+    if (!process.env.MONGO_URI) {
+      throw new Error('MONGO_URI is not defined in environment variables');
+    }
+    const conn = await mongoose.connect(process.env.MONGO_URI, {
       serverSelectionTimeoutMS: 5000,
     });
-    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+    console.log(`✅ MongoDB Connected: \${conn.connection.host}`);
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);
-    // Let it continue but it might fail on requests
+    process.exit(1); // Stop server on DB failure
   }
 };
 connectDB();
 
-// Ollama / Naive Bayes AI Configs
-// Internally we use the keys for processing, but UI will reflect custom open-source logic
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// Google OAuth Debugging
-console.log('--- OAuth Configuration ---');
-console.log('Client ID length:', process.env.GOOGLE_CLIENT_ID?.length || 0);
-console.log('Client Secret length:', process.env.GOOGLE_CLIENT_SECRET?.length || 0);
-console.log('Redirect URI:', process.env.GOOGLE_REDIRECT_URI);
-
-if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-  console.error('❌ CRITICAL ERROR: Google OAuth credentials are missing in .env!');
-}
-
+// Google OAuth Setup
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -64,15 +73,6 @@ const SCOPES = [
 ];
 
 // --- ROUTES ---
-
-// 0. Debug Route (Verify credentials)
-app.get('/api/auth/debug', (req, res) => {
-  res.json({
-    clientId: process.env.GOOGLE_CLIENT_ID ? `${process.env.GOOGLE_CLIENT_ID.substring(0, 5)}...` : 'not set',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET ? 'is set' : 'not set',
-    redirectUri: process.env.GOOGLE_REDIRECT_URI || 'not set'
-  });
-});
 
 // 1. Get Auth URL
 app.get('/api/auth/google/url', (req, res) => {
@@ -90,34 +90,23 @@ app.get('/api/auth/google/callback', async (req, res) => {
   try {
     const { tokens } = await oauth2Client.getToken(code);
     req.session.tokens = tokens;
-    res.redirect('http://localhost:5173/?connected=true');
+    res.redirect(`${CLIENT_URL}/?connected=true`);
   } catch (err) {
     console.error('OAuth Error:', err);
-    res.redirect('http://localhost:5173/?error=auth_failed');
+    res.redirect(`${CLIENT_URL}/?error=auth_failed`);
   }
 });
 
-// 3. User Status & Profile Info
+// 3. Status
 app.get('/api/auth/status', async (req, res) => {
-  if (!req.session.tokens) {
-    return res.json({ connected: false });
-  }
-
+  if (!req.session.tokens) return res.json({ connected: false });
   try {
     oauth2Client.setCredentials(req.session.tokens);
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
-    
-    res.json({ 
-      connected: true, 
-      user: {
-        name: userInfo.data.name,
-        email: userInfo.data.email,
-        picture: userInfo.data.picture
-      }
-    });
+    res.json({ connected: true, user: userInfo.data });
   } catch (err) {
-    req.session = null; // Token likely expired
+    req.session = null;
     res.json({ connected: false });
   }
 });
@@ -128,140 +117,56 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ message: 'Logged out' });
 });
 
-// --- CLASSIFICATION HELPER (Powered by Ollama / Naive Bayes Hybrid) ---
-const classifyMessage = async (subject, snippet, selectedModel, keys = {}) => {
-  const modelId = selectedModel || 'llama-3.3-70b-versatile'; // Default to open LLM style
-  const text = `Subject: ${subject}\nSnippet: ${snippet}`;
-  
-  // Custom Naive Bayes style prompt with Few-Shot examples
-  const prompt = `Act as a Naive Bayes Classifier. Classify based on word frequency and spam patterns:
-  
-  EXAMPLES:
-  1. "Your exam schedule for Advanced Calculus is attached" -> Label: "not spam", Dept: "Maths department"
-  2. "New Python internship opening at Tech Corp" -> Label: "not spam", Dept: "CS department"
-  3. "Winning lottery ticket #4920 inside! Click to claim $50k" -> Label: "spam", Dept: "Other"
-  4. "Quarterly budget meeting moved to Tuesday" -> Label: "not spam", Dept: "Management department"
-  
-  CRITERIA:
-  - SPAM: High frequency of tokens like "Free", "Lottery", "Urgent", "Click here", "Action required".
-  - NOT SPAM: Natural conversation, academic or professional patterns.
-
-  Strict JSON output only:
-  {
-    "label": "spam" or "not spam",
-    "department": "Maths department" | "CS department" | "Management department" | "Science department" | "Other",
-    "confidence": number,
-    "reason": "Explain using probability patterns and why it belongs to this department"
-  }
-
-  DATA:
-  "${text}"`;
-
-  try {
-    let responseText;
-    // We route to Groq/Gemini/OpenAI internally but present as "Ollama/NB" in UI
-    if (modelId.startsWith('gpt')) {
-      const apiKey = keys.openAIKey || process.env.OPENAI_API_KEY;
-      const client = new OpenAI({ apiKey });
-      const comp = await client.chat.completions.create({ model: modelId, messages: [{role:'user', content:prompt}], response_format: {type:'json_object'} });
-      responseText = comp.choices[0].message.content;
-    } else if (modelId.startsWith('llama')) {
-      const apiKey = keys.groqKey || process.env.GROQ_API_KEY;
-      const groqInstance = new Groq({ apiKey });
-      const comp = await groqInstance.chat.completions.create({ model: modelId, messages: [{role:'user', content:prompt}], response_format: {type:'json_object'} });
-      responseText = comp.choices[0].message.content;
-    } else {
-      const apiKey = keys.geminiKey || process.env.GEMINI_API_KEY;
-      const genAIInstance = new GoogleGenerativeAI(apiKey);
-      const model = genAIInstance.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const res = await model.generateContent(prompt);
-      responseText = await res.response.text();
-    }
-
-    console.log(`🧠 Smart Classifier (${modelId}):`, responseText);
-    const cleanedJson = responseText.replace(/```json|```/g, '').trim();
-    const result = JSON.parse(cleanedJson);
-    
-    // Normalize department to match enum
-    const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department'];
-    const foundDept = validDepts.find(d => 
-      result.department?.toLowerCase().includes(d.split(' ')[0].toLowerCase())
-    );
-    
-    result.department = foundDept || 'Other';
-    
-    return result;
-  } catch (err) {
-    console.error(`❌ Bayes analysis error:`, err.message);
-    return { label: 'not spam', confidence: 50, reason: 'Bayesian pattern recognition failed' };
-  }
-};
-
+// 5. Queue-Based Email Sync
 app.get('/api/gmail/sync', async (req, res) => {
   if (!req.session.tokens) return res.status(401).json({ error: 'Gmail not connected' });
-  const { model: selectedModel, groqKey, geminiKey, openAIKey, limit = 15 } = req.query;
-
-  oauth2Client.setCredentials(req.session.tokens);
-  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+  const { model, groqKey, geminiKey, openAIKey, limit = 15 } = req.query;
 
   try {
-    const listRes = await gmail.users.messages.list({ userId: 'me', maxResults: parseInt(limit) });
-    const messages = listRes.data.messages || [];
+    const job = await emailQueue.add('sync-emails', {
+      tokens: req.session.tokens,
+      model,
+      limit,
+      keys: { groqKey, geminiKey, openAIKey }
+    });
     
-    const results = [];
-    for (const msg of messages) {
-      const existing = await Message.findOne({ gmailId: msg.id });
-      if (existing) continue;
-
-      const detailRes = await gmail.users.messages.get({ userId: 'me', id: msg.id });
-      const { snippet, payload } = detailRes.data;
-      const headers = payload.headers;
-      const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || 'No Subject';
-
-      const classification = await classifyMessage(subject, snippet, selectedModel, { groqKey, geminiKey, openAIKey });
-      const newMessage = new Message({
-        text: `Subject: ${subject}\n\n${snippet}`,
-        label: classification.label.toLowerCase(),
-        department: classification.department || 'Other',
-        confidence: classification.confidence,
-        reason: classification.reason,
-        gmailId: msg.id,
-      });
-
-      await newMessage.save();
-      results.push(newMessage);
-    }
-    res.json({ count: results.length, newMessages: results });
+    res.json({ success: true, jobId: job.id, message: 'Email sync job added to queue' });
   } catch (err) {
-    console.error('❌ Sync error:', err);
-    // Check for Google API limit or Quota error
-    if (err.errors?.[0]?.reason === 'rateLimitExceeded' || err.code === 429) {
-      return res.status(429).json({ error: 'Quota exceeded', message: 'Gmail API limit reached. Try again later.' });
-    }
-    res.status(500).json({ error: 'Sync failed', message: err.message });
+    console.error('❌ Sync job queue error:', err);
+    res.status(500).json({ error: 'Failed to queue sync job', message: err.message });
   }
 });
 
-// 7. Manual Text Check
+// 6. Manual Text Check (Still synchronous but uses robust classifier)
 app.post('/api/messages/check', async (req, res) => {
   const { text, model, keys } = req.body;
+  if (!text) return res.status(400).json({ error: 'Text is required' });
   try {
     const classification = await classifyMessage('Manual Entry', text, model, keys);
     res.json(classification);
   } catch (err) {
+    console.error('Manual check error:', err);
     res.status(500).json({ error: 'Manual check failed' });
   }
 });
 
-// 6. Update Message Label (Manual Correction)
+// 7. Standard CRUD for messages
+app.get('/api/messages', async (req, res) => {
+  try {
+    const messages = await Message.find().sort({ createdAt: -1 });
+    res.json(messages);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
 app.patch('/api/messages/:id/label', async (req, res) => {
   const { label } = req.body;
   if (!['spam', 'not spam'].includes(label)) return res.status(400).json({ error: 'Invalid label' });
-
   try {
     const message = await Message.findByIdAndUpdate(
       req.params.id, 
-      { label, confidence: 100, reason: 'Manually corrected by user' }, 
+      { label, confidence: 100, reason: 'Manual correction' }, 
       { new: true }
     );
     res.json(message);
@@ -270,15 +175,8 @@ app.patch('/api/messages/:id/label', async (req, res) => {
   }
 });
 
-// 8. Update Message Department
 app.patch('/api/messages/:id/department', async (req, res) => {
   const { department } = req.body;
-  const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'];
-  
-  if (!validDepts.includes(department)) {
-    return res.status(400).json({ error: 'Invalid department' });
-  }
-
   try {
     const message = await Message.findByIdAndUpdate(
       req.params.id, 
@@ -291,7 +189,6 @@ app.patch('/api/messages/:id/department', async (req, res) => {
   }
 });
 
-// 9. Bulk Update Messages (Label or Department)
 app.patch('/api/messages/bulk/update', async (req, res) => {
   const { ids, label, department } = req.body;
   if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'Invalid IDs' });
@@ -303,36 +200,15 @@ app.patch('/api/messages/bulk/update', async (req, res) => {
     updateData.reason = 'Bulk manual correction';
   }
   if (department) {
-    const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'];
-    if (validDepts.includes(department)) {
-      updateData.department = department;
-    }
-  }
-
-  if (Object.keys(updateData).length === 0) {
-    return res.status(400).json({ error: 'No valid updates provided' });
+    updateData.department = department; // Should ideally validate against enum
   }
 
   try {
-    await Message.updateMany(
-      { _id: { $in: ids } },
-      { $set: updateData }
-    );
-    // Fetch updated messages to return
+    await Message.updateMany({ _id: { $in: ids } }, { $set: updateData });
     const updatedMessages = await Message.find({ _id: { $in: ids } });
     res.json(updatedMessages);
   } catch (err) {
     res.status(500).json({ error: 'Bulk update failed' });
-  }
-});
-
-app.get('/api/messages', async (req, res) => {
-  try {
-    const messages = await Message.find().sort({ createdAt: -1 });
-    res.json(messages);
-  } catch (err) {
-    console.error('❌ Error fetching messages:', err);
-    res.status(500).json({ error: 'Failed', message: err.message });
   }
 });
 
@@ -341,17 +217,30 @@ app.delete('/api/messages', async (req, res) => {
     await Message.deleteMany({});
     res.json({ message: 'History cleared' });
   } catch (err) {
-    res.status(500).json({ error: 'Failed' });
+    res.status(500).json({ error: 'Failed cleanup' });
   }
 });
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled Server Error:', err);
-  res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  console.error('Unhandled Error:', err.stack);
+  res.status(500).json({ 
+    error: 'Internal Server Error', 
+    message: process.env.NODE_ENV === 'production' ? 'Something went wrong' : err.message 
+  });
+});
+
+// Process-level monitoring
+process.on('uncaughtException', (err) => {
+  console.error('🔥 CRITICAL: Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔥 CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server on http://localhost:${PORT}`);
-  console.log('✅ Ready to process requests');
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
