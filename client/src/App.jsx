@@ -28,11 +28,10 @@ import {
   Briefcase,
   FlaskConical,
   Layers,
-  Bell,
   CheckSquare,
   Square,
-  MoreVertical,
-  ChevronDown
+  ChevronDown,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
@@ -64,12 +63,8 @@ function App() {
   const [isManualChecking, setIsManualChecking] = useState(false);
   const [selectedDept, setSelectedDept] = useState('All');
   const [showLimitModal, setShowLimitModal] = useState(false);
-  
-  // Bulk Action State
   const [selectedMessageIds, setSelectedMessageIds] = useState([]);
   const [showBulkDeptDropdown, setShowBulkDeptDropdown] = useState(false);
-
-  // Custom Toast System
   const [toasts, setToasts] = useState([]);
 
   const addToast = (message, type = 'success') => {
@@ -106,7 +101,7 @@ function App() {
       const { data } = await axios.get(`${API_URL}/messages`);
       setMessages(data);
     } catch (err) {
-      console.error('Error fetching messages:', err.response?.data?.message || err.message);
+      console.error('Error fetching messages:', err);
     } finally {
       setIsLoading(false);
     }
@@ -135,10 +130,10 @@ function App() {
     try {
       const { data } = await axios.patch(`${API_URL}/messages/${id}/label`, { label: newLabel });
       setMessages(prev => prev.map(m => m._id === id ? data : m));
-      addToast(`Message moved to ${newLabel === 'spam' ? 'Spam' : 'Inbox'}`);
+      addToast(`Moved to ${newLabel === 'spam' ? 'Spam' : 'Inbox'}`);
     } catch (err) {
       if (err.response?.status === 429) setShowLimitModal(true);
-      else addToast('Failed to update label', 'error');
+      else addToast('Update failed', 'error');
     }
   };
 
@@ -147,12 +142,10 @@ function App() {
       const { data } = await axios.patch(`${API_URL}/messages/${id}/department`, { department: newDept });
       setMessages(prev => prev.map(m => m._id === id ? data : m));
       addToast(`Categorized as ${newDept.replace(' department', '')}`);
-      if (selectedMessage?._id === id) {
-        setSelectedMessage(data);
-      }
+      if (selectedMessage?._id === id) setSelectedMessage(data);
     } catch (err) {
       if (err.response?.status === 429) setShowLimitModal(true);
-      else addToast('Failed to update department', 'error');
+      else addToast('Update failed', 'error');
     }
   };
 
@@ -163,7 +156,6 @@ function App() {
         ids: selectedMessageIds,
         ...updates
       });
-      // Replace only updated ones
       setMessages(prev => prev.map(m => {
         const updated = data.find(u => u._id === m._id);
         return updated || m;
@@ -186,24 +178,19 @@ function App() {
       await axios.get(`${API_URL}/gmail/sync`, { 
         params: { 
           model: selectedModel, 
-          groqKey: groqKey,
-          openAIKey: openAIKey,
-          geminiKey: geminiKey,
+          groqKey, openAIKey, geminiKey,
           limit: syncLimit
         } 
       });
       clearInterval(interval);
       setSyncProgress(100);
-      addToast('Sync complete! Latest emails scanned.');
+      addToast('Inbox synced successfully');
       fetchMessages();
     } catch (err) {
       if (err.response?.status === 429) setShowLimitModal(true);
-      else addToast('Sync failed: Check connection', 'error');
+      else addToast('Sync failed', 'error');
     } finally {
-      setTimeout(() => {
-        setIsSyncing(false);
-        setSyncProgress(0);
-      }, 500);
+      setTimeout(() => { setIsSyncing(false); setSyncProgress(0); }, 500);
     }
   };
 
@@ -212,14 +199,12 @@ function App() {
     setIsManualChecking(true);
     try {
       const { data } = await axios.post(`${API_URL}/messages/check`, {
-        text: manualText,
-        model: selectedModel,
-        keys: { groqKey, openAIKey, geminiKey }
+        text: manualText, model: selectedModel, keys: { groqKey, openAIKey, geminiKey }
       });
       setManualResult(data);
-      addToast('Text analysis complete');
+      addToast('Analysis complete');
     } catch (err) {
-      addToast('Check failed', 'error');
+      addToast('Analysis failed', 'error');
     } finally {
       setIsManualChecking(false);
     }
@@ -231,39 +216,26 @@ function App() {
     .filter((msg) => msg.text.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const toggleSelectAll = () => {
-    if (selectedMessageIds.length === filteredMessages.length) {
-      setSelectedMessageIds([]);
-    } else {
-      setSelectedMessageIds(filteredMessages.map(m => m._id));
-    }
+    setSelectedMessageIds(selectedMessageIds.length === filteredMessages.length ? [] : filteredMessages.map(m => m._id));
   };
 
   const toggleSelect = (e, id) => {
     e.stopPropagation();
-    setSelectedMessageIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
+    setSelectedMessageIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
   const departments = ['Maths department', 'CS department', 'Management department', 'Science department', 'Other'];
 
   return (
     <div className="gmail-container">
-      {/* Custom Toast Container */}
+      {/* Toast Container */}
       <div className="fixed bottom-6 right-6 z-[300] flex flex-col gap-3">
         <AnimatePresence>
           {toasts.map(t => (
-            <motion.div
-              key={t.id}
-              initial={{ opacity: 0, x: 50, scale: 0.8 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 20, scale: 0.8 }}
-              className={`px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border ${
-                t.type === 'success' ? 'bg-slate-900 text-white border-slate-800' : 'bg-red-50 text-red-600 border-red-100'
-              }`}
-            >
+            <motion.div key={t.id} initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+              className={`px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border ${t.type === 'success' ? 'bg-slate-900 text-white' : 'bg-red-50 text-red-600'}`}>
               {t.type === 'success' ? <CheckCircle size={18} className="text-green-400" /> : <AlertCircle size={18} />}
-              <span className="text-sm font-bold tracking-tight uppercase">{t.message}</span>
+              <span className="text-sm font-bold uppercase tracking-tight">{t.message}</span>
             </motion.div>
           ))}
         </AnimatePresence>
@@ -272,98 +244,64 @@ function App() {
       {/* Header */}
       <header className="gmail-header">
         <div className="flex items-center gap-3 min-w-[240px]">
-          <div className="bg-red-600 p-1.5 rounded-lg">
-            <ShieldAlert className="text-white" size={20} />
-          </div>
+          <div className="bg-red-600 p-1.5 rounded-lg"><ShieldAlert className="text-white" size={20} /></div>
           <span className="text-xl text-slate-700 font-black tracking-tighter uppercase">Spam Buster</span>
         </div>
-
         <div className="search-bar">
           <Search size={20} className="text-slate-500" />
-          <input 
-            type="text" 
-            placeholder="Search mail" 
-            className="search-input"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+          <input type="text" placeholder="Search mail" className="search-input" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
         </div>
-
         <div className="flex items-center gap-4 ml-auto">
-          {/* Model Selector */}
           <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
             <Sparkles className="text-blue-500" size={16} />
-            <select 
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="bg-transparent text-[10px] font-black uppercase tracking-wider outline-none border-none text-slate-600 cursor-pointer"
-            >
+            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="bg-transparent text-[10px] font-black uppercase tracking-wider outline-none border-none text-slate-600 cursor-pointer">
               <option value="llama-3.3-70b-versatile">Ollama Llama 3</option>
               <option value="llama-3.1-8b-instant">Ollama 8B (Fast)</option>
               <option value="gpt-4o-mini">Bayes GPT-4o</option>
               <option value="gemini-1.5-flash-latest">Naive Flash Engine</option>
             </select>
           </div>
-
-          <button onClick={() => setShowSettings(true)} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors">
-            <Settings size={20} />
-          </button>
-
+          <button onClick={() => setShowSettings(true)} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full"><Settings size={20} /></button>
           {user ? (
-            <div className="flex items-center gap-3 ml-2 relative">
-              <img 
-                src={user.picture} 
-                alt="P" 
-                className="w-8 h-8 rounded-full cursor-pointer border border-slate-200" 
-                referrerPolicy="no-referrer"
-                onClick={() => setShowProfileDetail(!showProfileDetail)}
-              />
+            <div className="relative">
+              <img src={user.picture} alt="P" className="w-8 h-8 rounded-full cursor-pointer" onClick={() => setShowProfileDetail(!showProfileDetail)} referrerPolicy="no-referrer" />
+              <AnimatePresence>
+                {showProfileDetail && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowProfileDetail(false)} />
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute top-10 right-0 bg-white shadow-2xl rounded-2xl border p-5 z-50 min-w-[240px]">
+                       <div className="text-center mb-4">
+                          <img src={user.picture} className="w-16 h-16 rounded-full mx-auto mb-2" referrerPolicy="no-referrer" />
+                          <p className="font-black text-slate-800">{user.name}</p>
+                          <p className="text-xs text-slate-500">{user.email}</p>
+                       </div>
+                       <button onClick={disconnectGmail} className="w-full py-2.5 text-xs font-black text-white bg-slate-800 rounded-xl hover:bg-slate-700 flex items-center justify-center gap-2 transition-all">
+                          <LogOut size={14} /> SIGN OUT
+                       </button>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
             </div>
-          ) : (
-            <button onClick={connectGmail} className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg">LINK GMAIL</button>
-          )}
+          ) : <button onClick={connectGmail} className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700">LINK GMAIL</button>}
         </div>
       </header>
 
       <div className="gmail-main">
         {/* Sidebar */}
         <aside className="gmail-sidebar">
-          <div className="compose-btn" onClick={syncEmails}>
-            {isSyncing ? <Loader2 className="animate-spin" size={20} /> : <RefreshCcw size={20} />}
-            <span>{isSyncing ? 'Syncing...' : 'Fetch Latest'}</span>
-          </div>
-
-          <div className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`} onClick={() => setActiveTab('inbox')}>
-            <Inbox size={20} />
-            <span>Inbox</span>
-            <span className="ml-auto text-xs">{activeTab === 'inbox' ? filteredMessages.length : ''}</span>
-          </div>
-
-          <div className={`nav-item ${activeTab === 'spam' ? 'active' : ''}`} onClick={() => setActiveTab('spam')}>
-            <Trash2 size={20} />
-            <span>Spam Vault</span>
-            <span className="ml-auto text-xs">{activeTab === 'spam' ? filteredMessages.length : ''}</span>
-          </div>
-
-          <div className={`nav-item ${activeTab === 'manual' ? 'active' : ''}`} onClick={() => setActiveTab('manual')}>
-            <MailSearch size={20} />
-            <span>Manual Check</span>
-          </div>
-
+          <div className="compose-btn" onClick={syncEmails}>{isSyncing ? <Loader2 className="animate-spin" size={20} /> : <RefreshCcw size={20} />}<span>Sync Latest</span></div>
+          <div className={`nav-item ${activeTab === 'inbox' ? 'active' : ''}`} onClick={() => setActiveTab('inbox')}><Inbox size={20} /><span>Inbox</span></div>
+          <div className={`nav-item ${activeTab === 'spam' ? 'active' : ''}`} onClick={() => setActiveTab('spam')}><Trash2 size={20} /><span>Spam Vault</span></div>
+          <div className={`nav-item ${activeTab === 'manual' ? 'active' : ''}`} onClick={() => setActiveTab('manual')}><MailSearch size={20} /><span>Manual Scan</span></div>
+          <div className={`nav-item ${activeTab === 'about' ? 'active' : ''}`} onClick={() => setActiveTab('about')}><Info size={20} /><span>Maths Guide</span></div>
           {(activeTab === 'inbox' || activeTab === 'spam') && (
             <div className="mt-6">
               <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Departments</p>
-              <div className={`nav-item ${selectedDept === 'All' ? 'active' : ''}`} onClick={() => setSelectedDept('All')}>
-                <Layers size={18} />
-                <span>All Mail</span>
-              </div>
+              <div className={`nav-item ${selectedDept === 'All' ? 'active' : ''}`} onClick={() => setSelectedDept('All')}><Layers size={18} /><span>All Mail</span></div>
               {departments.map(dept => (
                 <div key={dept} className={`nav-item ${selectedDept === dept ? 'active' : ''}`} onClick={() => setSelectedDept(dept)}>
-                  {dept.includes('Maths') && <Calculator size={18} />}
-                  {dept.includes('CS') && <Cpu size={18} />}
-                  {dept.includes('Management') && <Briefcase size={18} />}
-                  {dept.includes('Science') && <FlaskConical size={18} />}
-                  {dept === 'Other' && <MoreVertical size={18} />}
+                  {dept.includes('Maths') && <Calculator size={18} />}{dept.includes('CS') && <Cpu size={18} />}{dept.includes('Management') && <Briefcase size={18} />}{dept.includes('Science') && <FlaskConical size={18} />}{dept === 'Other' && <Layers size={18} />}
                   <span>{dept.replace(' department', '')}</span>
                 </div>
               ))}
@@ -373,236 +311,139 @@ function App() {
 
         {/* Content Area */}
         <main className="gmail-content">
-          <div className="flex items-center px-4 h-12 border-b gap-4 bg-white sticky top-0 z-[40]">
-             <div className="flex items-center gap-4">
-                <button onClick={toggleSelectAll} className="p-2 text-slate-400 hover:text-slate-600 transition-colors">
-                  {selectedMessageIds.length === filteredMessages.length && filteredMessages.length > 0 
-                  ? <CheckSquare size={18} className="text-blue-600" /> 
-                  : <Square size={18} />}
-                </button>
-             </div>
-
-             <AnimatePresence mode="wait">
-               {selectedMessageIds.length > 0 ? (
-                 <motion.div 
-                   key="bulk-actions"
-                   initial={{ opacity: 0, y: -10 }} 
-                   animate={{ opacity: 1, y: 0 }} 
-                   exit={{ opacity: 0, y: -10 }}
-                   className="flex items-center gap-2 flex-1"
-                 >
-                   <span className="text-xs font-bold text-blue-600 mr-2">{selectedMessageIds.length} Selected</span>
-                   
-                   <button 
-                     onClick={() => bulkUpdate({ label: activeTab === 'inbox' ? 'spam' : 'not spam' })}
-                     className="p-2 hover:bg-slate-100 rounded-lg text-slate-600" 
-                     title={activeTab === 'inbox' ? "Mark as Spam" : "Mark as Not Spam"}
-                   >
-                     {activeTab === 'inbox' ? <Trash2 size={18} /> : <Inbox size={18} />}
-                   </button>
-
-                   <div className="relative">
-                     <button 
-                       onClick={() => setShowBulkDeptDropdown(!showBulkDeptDropdown)}
-                       className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-600 transition-all border border-slate-200"
-                     >
-                       <Briefcase size={14} /> Categorize <ChevronDown size={14} />
-                     </button>
-                     <AnimatePresence>
-                       {showBulkDeptDropdown && (
-                         <motion.div 
-                           initial={{ opacity: 0, scale: 0.95, y: 5 }} 
-                           animate={{ opacity: 1, scale: 1, y: 0 }} 
-                           exit={{ opacity: 0, scale: 0.95, y: 5 }}
-                           className="absolute left-0 top-full mt-2 bg-white shadow-2xl rounded-2xl border p-2 z-[100] min-w-[180px]"
-                         >
-                           {departments.map(dept => (
-                             <button
-                               key={dept}
-                               onClick={() => bulkUpdate({ department: dept })}
-                               className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl transition-colors flex items-center gap-3"
-                             >
-                               <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
-                               {dept.replace(' department', '')}
-                             </button>
-                           ))}
-                         </motion.div>
-                       )}
-                     </AnimatePresence>
-                   </div>
-
-                   <button onClick={() => setSelectedMessageIds([])} className="text-xs font-bold text-slate-400 hover:text-slate-600 ml-auto">DESELECT ALL</button>
-                 </motion.div>
-               ) : (
-                 <motion.div 
-                   key="regular-actions"
-                   initial={{ opacity: 0 }} 
-                   animate={{ opacity: 1 }}
-                   className="flex items-center gap-4 flex-1"
-                 >
-                   <button onClick={fetchMessages} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full"><RefreshCcw size={18} /></button>
-                   {isSyncing && (
-                     <div className="flex-1 flex items-center gap-4 px-4">
-                        <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
-                          <motion.div className="h-full bg-blue-600" initial={{ width: 0 }} animate={{ width: `${syncProgress}%` }} />
-                        </div>
-                        <span className="text-[10px] font-black text-blue-600">{syncProgress}%</span>
-                     </div>
-                   )}
-                   <button 
-                     onClick={() => { if(window.confirm('Clear all labels?')) axios.delete(`${API_URL}/messages`).then(()=>setMessages([])) }} 
-                     className="p-2 text-slate-400 hover:text-red-500 ml-auto"
-                   >
-                     <Trash size={18} />
-                   </button>
-                 </motion.div>
-               )}
-             </AnimatePresence>
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            {isLoading ? (
-              <div className="h-full flex flex-col items-center justify-center opacity-30">
-                <Loader2 size={32} className="animate-spin text-blue-600 mb-2" />
-                <span className="text-xs font-bold uppercase tracking-widest">Scanning Emails...</span>
+          {activeTab === 'about' ? (
+            <div className="p-12 overflow-y-auto max-w-3xl mx-auto">
+              <h1 className="text-4xl font-black text-slate-800 mb-6 tracking-tight">How our Bayes Classifier works.</h1>
+              <div className="space-y-8 text-slate-600 leading-relaxed text-sm">
+                <section><h3 className="text-lg font-bold text-slate-700 mb-2">1. Probabilistic Frequency (Naive Bayes)</h3><p>Our algorithm uses Naive Bayes theorem to calculate the probability of a message being spam based on token frequency. We analyze keywords like "Urgent," "Prize," and "Link" to determine malicious intent.</p></section>
+                <section><h3 className="text-lg font-bold text-slate-700 mb-2">2. LLM Hybrid</h3><p>To enhance accuracy, we use advanced models like Gemini and Llama-3 to understand the semantic context, ensuring "Urgent" tasks from professors aren't marked as spam.</p></section>
+                <section><h3 className="text-lg font-bold text-slate-700 mb-2">3. Stateless Privacy</h3><p>Your data is scanned in stateless sessions and discarded immediately after classification.</p></section>
               </div>
-            ) : filteredMessages.length === 0 ? (
-               <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                 <MailSearch size={48} className="opacity-20 mb-4" />
-                 <p className="text-sm">No messages found here.</p>
-               </div>
-            ) : (
-                filteredMessages.map((msg) => (
-                  <div 
-                    key={msg._id} 
-                    className={`email-row group ${msg.label === 'spam' ? 'spam' : ''} ${selectedMessageIds.includes(msg._id) ? 'bg-blue-50' : ''}`} 
-                    onClick={() => setSelectedMessage(msg)}
-                  >
-                    <div className="flex items-center gap-3 w-[200px] shrink-0">
-                      <div className="flex items-center gap-3">
-                         <button 
-                           onClick={(e) => toggleSelect(e, msg._id)} 
-                           className={`p-1 hover:bg-slate-200 rounded transition-colors ${selectedMessageIds.includes(msg._id) ? 'text-blue-600' : 'text-slate-300'}`}
-                         >
-                           {selectedMessageIds.includes(msg._id) ? <CheckSquare size={16} /> : <Square size={16} />}
-                         </button>
-                         {msg.label === 'spam' ? <ShieldAlert size={16} className="text-red-500" /> : <ShieldCheck size={16} className="text-green-500" />}
+            </div>
+          ) : activeTab === 'manual' ? (
+            <div className="p-8 h-full flex flex-col items-center justify-center">
+              <div className="w-full max-w-xl text-center">
+                 <MailSearch size={48} className="text-blue-600 mx-auto mb-6" />
+                 <h2 className="text-2xl font-black text-slate-800 mb-8">Manual Pattern Scan</h2>
+                 <textarea className="w-full h-48 p-6 bg-slate-50 border rounded-2xl mb-6 outline-none focus:border-blue-500" placeholder="Paste suspected text..." value={manualText} onChange={(e) => setManualText(e.target.value)} />
+                 <button onClick={manualCheck} disabled={isManualChecking || !manualText} className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 shadow-xl shadow-blue-500/20">{isManualChecking ? 'ANALYZING...' : 'CHECK FOR SPAM'}</button>
+                 {manualResult && (
+                   <div className={`mt-8 p-6 rounded-2xl border ${manualResult.label === 'spam' ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
+                      <div className="flex justify-between items-center mb-4">
+                         <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase ${manualResult.label === 'spam' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{manualResult.label}</span>
+                         <span className="text-sm font-bold">{manualResult.confidence}% CONFIDENCE</span>
                       </div>
-                      <span className="truncate font-medium">{msg.text.split('\n\n')[0].replace('Subject: ', '').substring(0, 20)}...</span>
-                    </div>
-                    
-                    <div className="flex-1 min-w-0 pr-8">
-                      <span className="subject-text">{msg.text.split('\n\n')[0].replace('Subject: ', '')}</span>
-                      <span className="snippet-text"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 100)}...</span>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
+                      <p className="text-xs text-left italic"><strong>Reason:</strong> {manualResult.reason}</p>
+                   </div>
+                 )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center px-4 h-12 border-b bg-white sticky top-0 z-[40]">
+                 <button onClick={toggleSelectAll} className="p-2 text-slate-400 mr-2">{selectedMessageIds.length === filteredMessages.length && filteredMessages.length > 0 ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} />}</button>
+                 <AnimatePresence mode="wait">
+                    {selectedMessageIds.length > 0 ? (
+                      <motion.div key="bulk" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-3">
+                        <span className="text-xs font-bold text-blue-600">{selectedMessageIds.length} Selected</span>
+                        <button onClick={() => bulkUpdate({ label: activeTab === 'inbox' ? 'spam' : 'not spam' })} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">{activeTab === 'inbox' ? <Trash2 size={18} /> : <Inbox size={18} />}</button>
+                        <div className="relative">
+                           <button onClick={() => setShowBulkDeptDropdown(!showBulkDeptDropdown)} className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-600 border border-slate-200">Categorize <ChevronDown size={14} /></button>
+                           {showBulkDeptDropdown && (
+                             <div className="absolute left-0 top-full mt-2 bg-white shadow-2xl rounded-2xl border p-2 z-[100] min-w-[180px]">
+                               {departments.map(dept => <button key={dept} onClick={() => bulkUpdate({ department: dept })} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl">{dept.replace(' department', '')}</button>)}
+                             </div>
+                           )}
+                        </div>
+                        <button onClick={() => setSelectedMessageIds([])} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">CLEAR</button>
+                      </motion.div>
+                    ) : (
+                      <div className="flex items-center gap-4">
+                        <button onClick={fetchMessages} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full"><RefreshCcw size={18} /></button>
+                        {isSyncing && <div className="flex items-center gap-2"><div className="w-32 h-1.5 bg-slate-100 rounded-full overflow-hidden"><motion.div className="h-full bg-blue-600" animate={{ width: `${syncProgress}%` }} /></div><span className="text-[10px] font-bold">{syncProgress}%</span></div>}
+                      </div>
+                    )}
+                 </AnimatePresence>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {isLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center opacity-30"><Loader2 size={32} className="animate-spin text-blue-600 mb-2" /><span className="text-xs font-bold uppercase tracking-widest">Scanning...</span></div>
+                ) : (
+                  filteredMessages.map(msg => (
+                    <div key={msg._id} className={`email-row group ${msg.label === 'spam' ? 'spam' : ''} ${selectedMessageIds.includes(msg._id) ? 'bg-blue-50' : ''}`} onClick={() => setSelectedMessage(msg)}>
+                      <div className="flex items-center gap-3 w-48 shrink-0">
+                         <button onClick={(e) => toggleSelect(e, msg._id)} className={`p-1 ${selectedMessageIds.includes(msg._id) ? 'text-blue-600' : 'text-slate-300'}`}>{selectedMessageIds.includes(msg._id) ? <CheckSquare size={16} /> : <Square size={16} />}</button>
+                         {msg.label === 'spam' ? <ShieldAlert size={16} className="text-red-500" /> : <ShieldCheck size={16} className="text-green-500" />}
+                         <span className="truncate text-xs font-bold">{msg.text.split('\n\n')[0].replace('Subject: ', '').substring(0, 15)}</span>
+                      </div>
+                      <div className="flex-1 min-w-0 px-4 truncate"><span className="text-slate-800 font-medium">{msg.text.split('\n\n')[0].replace('Subject: ', '')}</span><span className="text-slate-400"> - {msg.snippet || msg.text.split('\n\n')[1]?.substring(0, 80)}...</span></div>
                       <div className="hidden group-hover:flex items-center gap-1 mr-4">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }}
-                          className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500"
-                        >
-                          {msg.label === 'spam' ? <Inbox size={14} /> : <Trash2 size={14} />}
-                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500">{msg.label === 'spam' ? <Inbox size={14} /> : <Trash2 size={14} />}</button>
                         <div className="relative group/dept">
-                          <button onClick={(e) => { e.stopPropagation(); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500"><Briefcase size={14} /></button>
-                          <div className="absolute right-0 bottom-full mb-2 hidden group-hover/dept:block bg-white shadow-xl border rounded-xl p-1 z-[60] min-w-[140px]">
-                            {departments.map(dept => (
-                              <button key={dept} onClick={(e) => { e.stopPropagation(); updateDepartment(msg._id, dept); }} className="w-full text-left px-3 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-50 rounded-lg">
-                                {dept.replace(' department', '')}
-                              </button>
-                            ))}
-                          </div>
+                           <button onClick={(e) => { e.stopPropagation(); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500"><Briefcase size={14} /></button>
+                           <div className="absolute right-0 bottom-full mb-2 hidden group-hover/dept:block bg-white shadow-xl border rounded-xl p-1 z-[60] min-w-[120px]">
+                              {departments.map(dept => <button key={dept} onClick={(e) => { e.stopPropagation(); updateDepartment(msg._id, dept); }} className="w-full text-left px-3 py-1 text-[10px] font-bold text-slate-600 hover:bg-slate-50">{dept.replace(' department', '')}</button>)}
+                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-col items-end mr-4">
-                         <div className="flex items-center gap-2">
-                           <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[8px] font-black uppercase">{msg.department || 'Other'}</span>
-                           <span className={`badge ${msg.label === 'spam' ? 'badge-spam' : 'badge-safe'}`}>{Math.round(msg.confidence)}%</span>
-                         </div>
-                      </div>
+                      <div className="w-32 text-right text-[10px]"><span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 mr-2">{msg.department}</span><span className="font-bold text-slate-400">{Math.round(msg.confidence)}%</span></div>
                     </div>
-                  </div>
-                ))
-            )}
-          </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </main>
       </div>
 
-      {/* API Limit Modal */}
       <AnimatePresence>
-        {showLimitModal && (
+        {showSettings && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowLimitModal(false)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl border text-center">
-              <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                <AlertCircle className="text-amber-600" size={32} />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSettings(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="relative bg-white w-full max-w-md rounded-2xl p-8 border">
+              <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><Settings size={20} /> Settings</h2>
+              <div className="space-y-6">
+                <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-2">Scan Depth: {syncLimit} emails</label><input type="range" min="5" max="50" value={syncLimit} onChange={(e) => setSyncLimit(e.target.value)} className="w-full h-1.5 bg-slate-100 rounded-lg accent-blue-600" /></div>
+                <div className="space-y-3">
+                  <input type="password" placeholder="Gemini Key" value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} className="w-full py-3 px-4 bg-slate-50 border rounded-xl text-sm" />
+                  <input type="password" placeholder="Groq Key" value={groqKey} onChange={(e) => setGroqKey(e.target.value)} className="w-full py-3 px-4 bg-slate-50 border rounded-xl text-sm" />
+                </div>
               </div>
-              <h3 className="text-xl font-black text-slate-800 mb-2">API LIMIT REACHED</h3>
-              <p className="text-sm text-slate-500 mb-8 leading-relaxed">Please wait a few minutes before syncing again.</p>
-              <button 
-                onClick={() => setShowLimitModal(false)}
-                className="w-full py-4 bg-slate-800 text-white font-black rounded-2xl"
-              >
-                UNDERSTOOD
-              </button>
+              <button onClick={() => setShowSettings(false)} className="w-full py-4 bg-blue-600 text-white font-black rounded-xl mt-6">SAVE CONFIG</button>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
 
-      {/* Message Detail Modal (Shortened for brevity but preserves core logic) */}
       <AnimatePresence>
         {selectedMessage && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedMessage(null)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-              <div className="px-8 py-6 border-b flex justify-between items-start bg-slate-50">
-                 <div>
-                    <span className={`badge ${selectedMessage.label === 'spam' ? 'badge-spam' : 'badge-safe'} mb-2 inline-block`}>{selectedMessage.label}</span>
-                    <h2 className="text-xl font-bold text-slate-800">{selectedMessage.text.split('\n\n')[0].replace('Subject: ', '')}</h2>
-                 </div>
+              <div className="px-8 py-6 border-b flex justify-between bg-slate-50">
+                 <div><span className={`badge ${selectedMessage.label === 'spam' ? 'badge-spam' : 'badge-safe'} mb-2 inline-block`}>{selectedMessage.label}</span><h2 className="text-xl font-bold">{selectedMessage.text.split('\n\n')[0].replace('Subject: ', '')}</h2></div>
                  <button onClick={() => setSelectedMessage(null)}><XCircle size={24} className="text-slate-400" /></button>
               </div>
-              <div className="flex-1 overflow-y-auto p-8 space-y-8">
-                 <section>
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4">Snippet</label>
-                    <div className="p-6 bg-slate-50 rounded-2xl border italic text-slate-700 leading-relaxed">{selectedMessage.text.split('\n\n')[1]}</div>
-                 </section>
-                 <section className="bg-blue-50/30 p-6 rounded-2xl border border-blue-100">
-                    <div className="flex items-center gap-2 mb-4"><Sparkles className="text-blue-500" size={18} /><label className="text-[10px] font-black text-blue-500 uppercase">AI Intelligence</label></div>
+              <div className="p-8 space-y-6 overflow-y-auto">
+                 <section><label className="text-[10px] font-black uppercase text-slate-400">Content</label><div className="p-6 bg-slate-50 border rounded-2xl italic text-sm text-slate-600">{selectedMessage.text.split('\n\n')[1]}</div></section>
+                 <section className="p-6 bg-blue-50/50 rounded-2xl border border-blue-100">
+                    <div className="flex items-center gap-2 mb-4"><Sparkles className="text-blue-500" size={16} /><label className="text-[10px] font-black uppercase text-blue-500">AI Log</label></div>
                     <div className="space-y-4">
-                       <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-blue-50">
-                          <span className="text-xs text-slate-500">Department</span>
-                          <span className="text-sm font-black text-blue-600">{selectedMessage.department}</span>
+                       <div className="flex justify-between text-sm font-bold"><span>Confidence</span><span className="text-blue-600">{Math.round(selectedMessage.confidence)}%</span></div>
+                       <p className="text-sm text-slate-600"><strong>Reason:</strong> {selectedMessage.reason}</p>
+                       <div className="mt-4 pt-4 border-t border-blue-100 flex flex-wrap gap-2">
+                          {departments.map(dept => <button key={dept} onClick={() => updateDepartment(selectedMessage._id, dept)} className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-colors ${selectedMessage.department === dept ? 'bg-blue-600 text-white' : 'bg-white hover:border-blue-400'}`}>{dept.replace(' department', '')}</button>)}
                        </div>
-                       <p className="text-sm text-slate-700 font-medium"><span className="font-bold text-blue-600 mr-2">Reason:</span>{selectedMessage.reason}</p>
-                    </div>
-                    <div className="mt-6 pt-6 border-t border-blue-100">
-                      <label className="text-[10px] font-black text-blue-500 uppercase block mb-3">Re-categorize</label>
-                      <div className="flex flex-wrap gap-2">
-                        {departments.map(dept => (
-                          <button key={dept} onClick={() => updateDepartment(selectedMessage._id, dept)} className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border ${selectedMessage.department === dept ? 'bg-blue-600 text-white' : 'bg-white text-slate-500'}`}>{dept.replace(' department', '')}</button>
-                        ))}
-                      </div>
                     </div>
                  </section>
               </div>
               <div className="px-8 py-4 border-t bg-slate-50 flex justify-end gap-3">
-                 <button onClick={() => setSelectedMessage(null)} className="px-6 py-2.5 text-sm font-bold text-slate-600">Close</button>
-                 <button onClick={() => { updateLabel(selectedMessage._id, selectedMessage.label === 'spam' ? 'not spam' : 'spam'); setSelectedMessage(null); }} className={`px-6 py-2.5 text-sm font-bold text-white rounded-xl ${selectedMessage.label === 'spam' ? 'bg-blue-600' : 'bg-red-600'}`}>
-                   {selectedMessage.label === 'spam' ? 'Move to Inbox' : 'Mark as Spam'}
-                 </button>
+                 <button onClick={() => selectedMessage.label === 'spam' ? updateLabel(selectedMessage._id, 'not spam') : updateLabel(selectedMessage._id, 'spam')} className={`px-6 py-2.5 text-sm font-bold text-white rounded-xl ${selectedMessage.label === 'spam' ? 'bg-blue-600' : 'bg-red-600'}`}>{selectedMessage.label === 'spam' ? 'Move to Inbox' : 'Mark as Spam'}</button>
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
-
-      <style dangerouslySetInnerHTML={{ __html: `
-        .email-row:hover .group { opacity: 1 !important; }
-        .email-row.bg-blue-50 { border-left: 3px solid #2563eb; }
-      `}} />
     </div>
   );
 }
