@@ -87,6 +87,17 @@ function App() {
     fetchMessages();
   }, []);
 
+  // Handle auto-sync after Google redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'true' && user && !isSyncing) {
+      syncEmails();
+      // Clean up URL to prevent repeat syncs on refresh
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+    }
+  }, [user]);
+
   const checkConnection = async () => {
     try {
       const { data } = await axios.get(`${API_URL}/auth/status`);
@@ -121,7 +132,8 @@ function App() {
     try {
       await axios.post(`${API_URL}/auth/logout`);
       setUser(null);
-      addToast('Disconnected from Gmail');
+      setMessages([]); // Clear messages locally
+      addToast('Disconnected and cleared data');
     } catch (err) {
       console.error('Logout failed');
     }

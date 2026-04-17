@@ -112,9 +112,15 @@ app.get('/api/auth/status', async (req, res) => {
 });
 
 // 4. Logout
-app.post('/api/auth/logout', (req, res) => {
-  req.session = null;
-  res.json({ message: 'Logged out' });
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    await Message.deleteMany({});
+    req.session = null;
+    res.json({ message: 'Logged out and history cleared' });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({ error: 'Logout failed' });
+  }
 });
 
 // 5. Queue-Based Email Sync
