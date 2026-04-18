@@ -162,6 +162,29 @@ function App() {
     }
   };
 
+  const deleteMessage = async (id) => {
+    try {
+      await axios.delete(`${API_URL}/messages/${id}`);
+      setMessages(prev => prev.filter(m => m._id !== id));
+      addToast('Message deleted');
+      if (selectedMessage?._id === id) setSelectedMessage(null);
+    } catch (err) {
+      addToast('Delete failed', 'error');
+    }
+  };
+
+  const bulkDelete = async () => {
+    if (selectedMessageIds.length === 0) return;
+    try {
+      await axios.post(`${API_URL}/messages/bulk/delete`, { ids: selectedMessageIds });
+      setMessages(prev => prev.filter(m => !selectedMessageIds.includes(m._id)));
+      addToast(`Deleted ${selectedMessageIds.length} messages`);
+      setSelectedMessageIds([]);
+    } catch (err) {
+      addToast('Bulk delete failed', 'error');
+    }
+  };
+
   const bulkUpdate = async (updates) => {
     if (selectedMessageIds.length === 0) return;
     try {
@@ -386,20 +409,21 @@ function App() {
               <div className="flex items-center px-4 h-12 border-b bg-white sticky top-0 z-[40]">
                  <button onClick={toggleSelectAll} className="p-2 text-slate-400 mr-2">{selectedMessageIds.length === filteredMessages.length && filteredMessages.length > 0 ? <CheckSquare size={18} className="text-blue-600" /> : <Square size={18} />}</button>
                  <AnimatePresence mode="wait">
-                    {selectedMessageIds.length > 0 ? (
-                      <motion.div key="bulk" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-3">
-                         <span className="text-xs font-bold text-blue-600">{selectedMessageIds.length} Selected</span>
-                         <button onClick={() => bulkUpdate({ label: activeTab === 'inbox' ? 'spam' : 'not spam' })} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">{activeTab === 'inbox' ? <Trash2 size={18} /> : <Inbox size={18} />}</button>
-                         <div className="relative">
-                            <button onClick={() => setShowBulkDeptDropdown(!showBulkDeptDropdown)} className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-600 border border-slate-200">Categorize <ChevronDown size={14} /></button>
-                            {showBulkDeptDropdown && (
-                              <div className="absolute left-0 top-full mt-2 bg-white shadow-2xl rounded-2xl border p-2 z-[100] min-w-[180px]">
-                                {departments.map(dept => <button key={dept} onClick={() => bulkUpdate({ department: dept })} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl">{dept.replace(' department', '')}</button>)}
-                              </div>
-                            )}
-                         </div>
-                         <button onClick={() => setSelectedMessageIds([])} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">CLEAR</button>
-                      </motion.div>
+                     {selectedMessageIds.length > 0 ? (
+                       <motion.div key="bulk" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-blue-600">{selectedMessageIds.length} Selected</span>
+                          <button onClick={() => bulkUpdate({ label: activeTab === 'inbox' ? 'spam' : 'not spam' })} title={activeTab === 'inbox' ? 'Mark as Spam' : 'Move to Inbox'} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">{activeTab === 'inbox' ? <MailWarning size={18} /> : <Inbox size={18} />}</button>
+                          <button onClick={bulkDelete} title="Delete Forever" className="p-2 hover:bg-red-50 rounded-lg text-red-500"><Trash2 size={18} /></button>
+                          <div className="relative">
+                             <button onClick={() => setShowBulkDeptDropdown(!showBulkDeptDropdown)} className="flex items-center gap-1 px-3 py-1.5 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-600 border border-slate-200">Categorize <ChevronDown size={14} /></button>
+                             {showBulkDeptDropdown && (
+                               <div className="absolute left-0 top-full mt-2 bg-white shadow-2xl rounded-2xl border p-2 z-[100] min-w-[180px]">
+                                 {departments.map(dept => <button key={dept} onClick={() => bulkUpdate({ department: dept })} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl">{dept.replace(' department', '')}</button>)}
+                               </div>
+                             )}
+                          </div>
+                          <button onClick={() => setSelectedMessageIds([])} className="text-[10px] font-bold text-slate-400 hover:text-slate-600">CLEAR</button>
+                       </motion.div>
                     ) : (
                       <div className="flex items-center gap-4">
                         <button onClick={fetchMessages} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full"><RefreshCcw size={18} /></button>
@@ -420,15 +444,16 @@ function App() {
                          <span className="truncate text-xs font-bold">{msg.text?.split('\n\n')?.[0]?.replace('Subject: ', '')?.substring(0, 15) || 'No Subject'}</span>
                       </div>
                       <div className="flex-1 min-w-0 px-4 truncate"><span className="text-slate-800 font-medium">{msg.text?.split('\n\n')?.[0]?.replace('Subject: ', '') || 'Untitled'}</span><span className="text-slate-400"> - {msg.snippet || msg.text?.split('\n\n')?.[1]?.substring(0, 80) || 'No content preview'}...</span></div>
-                      <div className="hidden group-hover:flex items-center gap-1 mr-4">
-                        <button onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500">{msg.label === 'spam' ? <Inbox size={14} /> : <Trash2 size={14} />}</button>
-                        <div className="relative group/dept">
-                           <button onClick={(e) => { e.stopPropagation(); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500"><Briefcase size={14} /></button>
-                           <div className="absolute right-0 bottom-full mb-2 hidden group-hover/dept:block bg-white shadow-xl border rounded-xl p-1 z-[60] min-w-[120px]">
-                              {departments.map(dept => <button key={dept} onClick={(e) => { e.stopPropagation(); updateDepartment(msg._id, dept); }} className="w-full text-left px-3 py-1 text-[10px] font-bold text-slate-600 hover:bg-slate-50">{dept.replace(' department', '')}</button>)}
-                           </div>
-                        </div>
-                      </div>
+                       <div className="hidden group-hover:flex items-center gap-1 mr-4">
+                         <button onClick={(e) => { e.stopPropagation(); updateLabel(msg._id, msg.label === 'spam' ? 'not spam' : 'spam'); }} title={msg.label === 'spam' ? 'Move to Inbox' : 'Mark as Spam'} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500">{msg.label === 'spam' ? <Inbox size={14} /> : <MailWarning size={14} />}</button>
+                         <button onClick={(e) => { e.stopPropagation(); deleteMessage(msg._id); }} title="Delete" className="p-1.5 hover:bg-red-50 rounded-lg text-red-500"><Trash2 size={14} /></button>
+                         <div className="relative group/dept">
+                            <button onClick={(e) => { e.stopPropagation(); }} className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500"><Briefcase size={14} /></button>
+                            <div className="absolute right-0 bottom-full mb-2 hidden group-hover/dept:block bg-white shadow-xl border rounded-xl p-1 z-[60] min-w-[120px]">
+                               {departments.map(dept => <button key={dept} onClick={(e) => { e.stopPropagation(); updateDepartment(msg._id, dept); }} className="w-full text-left px-3 py-1 text-[10px] font-bold text-slate-600 hover:bg-slate-50">{dept.replace(' department', '')}</button>)}
+                            </div>
+                         </div>
+                       </div>
                       <div className="w-32 text-right text-[10px]"><span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 mr-2">{msg.department}</span><span className="font-bold text-slate-400">{Math.round(msg.confidence)}%</span></div>
                     </div>
                   ))
@@ -480,9 +505,10 @@ function App() {
                     </div>
                  </section>
               </div>
-              <div className="px-8 py-4 border-t bg-slate-50 flex justify-end gap-3">
-                 <button onClick={() => selectedMessage.label === 'spam' ? updateLabel(selectedMessage._id, 'not spam') : updateLabel(selectedMessage._id, 'spam')} className={`px-6 py-2.5 text-sm font-bold text-white rounded-xl ${selectedMessage.label === 'spam' ? 'bg-blue-600' : 'bg-red-600'}`}>{selectedMessage.label === 'spam' ? 'Move to Inbox' : 'Mark as Spam'}</button>
-              </div>
+               <div className="px-8 py-4 border-t bg-slate-50 flex justify-end gap-3">
+                  <button onClick={() => deleteMessage(selectedMessage._id)} className="px-6 py-2.5 text-sm font-bold text-red-600 border border-red-100 bg-white hover:bg-red-50 rounded-xl">Delete Forever</button>
+                  <button onClick={() => selectedMessage.label === 'spam' ? updateLabel(selectedMessage._id, 'not spam') : updateLabel(selectedMessage._id, 'spam')} className={`px-6 py-2.5 text-sm font-bold text-white rounded-xl ${selectedMessage.label === 'spam' ? 'bg-blue-600' : 'bg-red-600'}`}>{selectedMessage.label === 'spam' ? 'Move to Inbox' : 'Mark as Spam'}</button>
+               </div>
             </motion.div>
           </div>
         )}

@@ -90,6 +90,13 @@ app.get('/api/auth/google/callback', async (req, res) => {
   try {
     const { tokens } = await oauth2Client.getToken(code);
     req.session.tokens = tokens;
+    
+    // Fetch user info to get email and store it in session for isolation
+    oauth2Client.setCredentials(tokens);
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const userInfo = await oauth2.userinfo.get();
+    req.session.userEmail = userInfo.data.email;
+    
     res.redirect(`${CLIENT_URL}/?connected=true`);
   } catch (err) {
     console.error('OAuth Error:', err);
@@ -104,6 +111,8 @@ app.get('/api/auth/status', async (req, res) => {
     oauth2Client.setCredentials(req.session.tokens);
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const userInfo = await oauth2.userinfo.get();
+    // Refresh userEmail in session if needed
+    req.session.userEmail = userInfo.data.email;
     res.json({ connected: true, user: userInfo.data });
   } catch (err) {
     req.session = null;
@@ -114,7 +123,18 @@ app.get('/api/auth/status', async (req, res) => {
 // 4. Logout
 app.post('/api/auth/logout', async (req, res) => {
   try {
-    await Message.deleteMany({});
+    // Optionally clear user's messages on logout if that's what "vanish" means
+    // But usually data should persist between logins of the same user.
+    // However, the user said "its data should vanish all mails only show when mail id inbox mails only"
+    // and they seem to want per-session or per-login cleanup? 
+    // Actually, "its data should vanish" probably means "shouldn't be shown to others".
+    // I'll keep the data but filter it by userEmail in GET /api/messages.
+    // If they want to explicitely clear it, they can use the delete endpoint.
+    // I'll modify this to ONLY logout and NOT delete records, OR only delete current user's.
+    // Given the user's request, I'll make it only delete current user's history to satisfy "data should vanish".
+    if (req.session.userEmail) {
+        await Message.deleteMany({ userEmail: req.session.userEmail });
+    }
     req.session = null;
     res.json({ message: 'Logged out and history cleared' });
   } catch (err) {
@@ -125,12 +145,15 @@ app.post('/api/auth/logout', async (req, res) => {
 
 // 5. Queue-Based Email Sync
 app.get('/api/gmail/sync', async (req, res) => {
-  if (!req.session.tokens) return res.status(401).json({ error: 'Gmail not connected' });
+  if (!req.session.tokens || !req.session.userEmail) {
+    return res.status(401).json({ error: 'Gmail not connected' });
+  }
   const { model, groqKey, geminiKey, openAIKey, limit = 15 } = req.query;
 
   try {
     const job = await emailQueue.add('sync-emails', {
       tokens: req.session.tokens,
+      userEmail: req.session.userEmail,
       model,
       limit,
       keys: { groqKey, geminiKey, openAIKey }
@@ -158,8 +181,9 @@ app.post('/api/messages/check', async (req, res) => {
 
 // 7. Standard CRUD for messages
 app.get('/api/messages', async (req, res) => {
+  if (!req.session.userEmail) return res.json([]);
   try {
-    const messages = await Message.find().sort({ createdAt: -1 });
+    const messages = await Message.find({ userEmail: req.session.userEmail }).sort({ createdAt: -1 });
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: 'Failed' });
@@ -167,14 +191,16 @@ app.get('/api/messages', async (req, res) => {
 });
 
 app.patch('/api/messages/:id/label', async (req, res) => {
+  if (!req.session.userEmail) return res.status(401).json({ error: 'Unauthorized' });
   const { label } = req.body;
   if (!['spam', 'not spam'].includes(label)) return res.status(400).json({ error: 'Invalid label' });
   try {
-    const message = await Message.findByIdAndUpdate(
-      req.params.id, 
+    const message = await Message.findOneAndUpdate(
+      { _id: req.params.id, userEmail: req.session.userEmail }, 
       { label, confidence: 100, reason: 'Manual correction' }, 
       { new: true }
     );
+    if (!message) return res.status(404).json({ error: 'Message not found' });
     res.json(message);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update label' });
@@ -182,13 +208,15 @@ app.patch('/api/messages/:id/label', async (req, res) => {
 });
 
 app.patch('/api/messages/:id/department', async (req, res) => {
+  if (!req.session.userEmail) return res.status(401).json({ error: 'Unauthorized' });
   const { department } = req.body;
   try {
-    const message = await Message.findByIdAndUpdate(
-      req.params.id, 
+    const message = await Message.findOneAndUpdate(
+      { _id: req.params.id, userEmail: req.session.userEmail }, 
       { department }, 
       { new: true }
     );
+    if (!message) return res.status(404).json({ error: 'Message not found' });
     res.json(message);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update department' });
@@ -196,6 +224,7 @@ app.patch('/api/messages/:id/department', async (req, res) => {
 });
 
 app.patch('/api/messages/bulk/update', async (req, res) => {
+  if (!req.session.userEmail) return res.status(401).json({ error: 'Unauthorized' });
   const { ids, label, department } = req.body;
   if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'Invalid IDs' });
 
@@ -206,12 +235,12 @@ app.patch('/api/messages/bulk/update', async (req, res) => {
     updateData.reason = 'Bulk manual correction';
   }
   if (department) {
-    updateData.department = department; // Should ideally validate against enum
+    updateData.department = department; 
   }
 
   try {
-    await Message.updateMany({ _id: { $in: ids } }, { $set: updateData });
-    const updatedMessages = await Message.find({ _id: { $in: ids } });
+    await Message.updateMany({ _id: { $in: ids }, userEmail: req.session.userEmail }, { $set: updateData });
+    const updatedMessages = await Message.find({ _id: { $in: ids }, userEmail: req.session.userEmail });
     res.json(updatedMessages);
   } catch (err) {
     res.status(500).json({ error: 'Bulk update failed' });
@@ -219,11 +248,35 @@ app.patch('/api/messages/bulk/update', async (req, res) => {
 });
 
 app.delete('/api/messages', async (req, res) => {
+  if (!req.session.userEmail) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    await Message.deleteMany({});
+    await Message.deleteMany({ userEmail: req.session.userEmail });
     res.json({ message: 'History cleared' });
   } catch (err) {
     res.status(500).json({ error: 'Failed cleanup' });
+  }
+});
+
+app.delete('/api/messages/:id', async (req, res) => {
+  if (!req.session.userEmail) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const result = await Message.deleteOne({ _id: req.params.id, userEmail: req.session.userEmail });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ message: 'Deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete' });
+  }
+});
+
+app.post('/api/messages/bulk/delete', async (req, res) => {
+  if (!req.session.userEmail) return res.status(401).json({ error: 'Unauthorized' });
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'Invalid IDs' });
+  try {
+    await Message.deleteMany({ _id: { $in: ids }, userEmail: req.session.userEmail });
+    res.json({ message: 'Bulk delete successful' });
+  } catch (err) {
+    res.status(500).json({ error: 'Bulk delete failed' });
   }
 });
 

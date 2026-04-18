@@ -24,8 +24,8 @@ connectDB();
 const worker = new Worker(
   'email-sync',
   async (job) => {
-    const { tokens, model, keys, limit } = job.data;
-    console.log(`🚀 Processing job ${job.id} for sync of up to ${limit} messages`);
+    const { tokens, model, keys, limit, userEmail } = job.data;
+    console.log(`🚀 Processing job ${job.id} for user ${userEmail} sync of up to ${limit} messages`);
 
     // Progress tracking
     await job.updateProgress(0);
@@ -48,7 +48,7 @@ const worker = new Worker(
       let processedCount = 0;
       for (const msg of messages) {
         try {
-          const existing = await Message.findOne({ gmailId: msg.id });
+          const existing = await Message.findOne({ gmailId: msg.id, userEmail });
           if (existing) continue;
 
           const detailRes = await gmail.users.messages.get({ userId: 'me', id: msg.id });
@@ -64,6 +64,7 @@ const worker = new Worker(
             confidence: classification.confidence,
             reason: classification.reason,
             gmailId: msg.id,
+            userEmail,
           });
 
           await newMessage.save();

@@ -18,6 +18,10 @@ const MessageSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  userEmail: {
+    type: String,
+    required: true,
+  },
   gmailId: {
     type: String,
     unique: true,
