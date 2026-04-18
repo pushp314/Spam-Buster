@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { 
   Inbox, 
@@ -39,6 +39,19 @@ import './App.css';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 axios.defaults.withCredentials = true;
 
+const SyncProgressBar = ({ progress }) => (
+  <div className="flex items-center gap-2">
+    <div className="w-32 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+      <motion.div 
+        className="h-full bg-blue-600" 
+        animate={{ width: `${progress}%` }} 
+        transition={{ type: 'spring', stiffness: 100, damping: 20 }}
+      />
+    </div>
+    <span className="text-[10px] font-bold">{progress}%</span>
+  </div>
+);
+
 function App() {
   const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash-latest');
   const [messages, setMessages] = useState([]);
@@ -67,6 +80,13 @@ function App() {
   const [showBulkDeptDropdown, setShowBulkDeptDropdown] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [showNoSpamModal, setShowNoSpamModal] = useState(false);
+  const syncIntervalRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+    };
+  }, []);
 
   const addToast = (message, type = 'success') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -207,8 +227,11 @@ function App() {
 
   const syncEmails = async () => {
     if (!user) return connectGmail();
+    if (isSyncing) return;
+    
     setIsSyncing(true);
     setSyncProgress(10);
+    
     try {
       const { data } = await axios.get(`${API_URL}/gmail/sync`, { 
         params: { 
@@ -220,27 +243,35 @@ function App() {
 
       if (data.success) {
         addToast('Sync job added to queue');
-        let progress = 10;
-        const interval = setInterval(async () => {
-          progress += 5;
-          if (progress >= 95) {
-            clearInterval(interval);
+        let progressVal = 10;
+        
+        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+        
+        syncIntervalRef.current = setInterval(async () => {
+          progressVal += 5;
+          if (progressVal >= 100) {
+            clearInterval(syncIntervalRef.current);
+            syncIntervalRef.current = null;
             setIsSyncing(false);
             setSyncProgress(0);
             
-            const { data: updatedMessages } = await axios.get(`${API_URL}/messages`);
-            setMessages(updatedMessages);
-            
-            const spamRecords = updatedMessages.filter(m => m.label === 'spam');
-            if (spamRecords.length === 0) {
-              setShowNoSpamModal(true);
-            } else {
-              addToast(`Sync complete. Found ${spamRecords.length} spam messages.`);
+            try {
+                const { data: updatedMessages } = await axios.get(`${API_URL}/messages`);
+                setMessages(updatedMessages);
+                
+                const spamRecords = updatedMessages.filter(m => m.label === 'spam');
+                if (spamRecords.length === 0) {
+                  setShowNoSpamModal(true);
+                } else {
+                  addToast(`Sync complete. Found ${spamRecords.length} spam messages.`);
+                }
+            } catch (fetchErr) {
+                console.error("Failed to fetch messages after sync", fetchErr);
             }
           } else {
-            setSyncProgress(progress);
+            setSyncProgress(progressVal);
           }
-        }, 800);
+        }, 600);
       }
     } catch (err) {
       if (err.response?.status === 429) setShowLimitModal(true);
@@ -266,20 +297,19 @@ function App() {
     }
   };
 
-  const filteredMessages = messages
-    .filter((msg) => {
-      // If user is in the Spam Vault tab, ALWAYS show only spam
-      if (activeTab === 'spam') return msg.label === 'spam';
-      // If user is in Manual Scan or Maths Guide, navigation handles it, 
-      // but for email tabs:
-      if (activeTab === 'inbox') {
-        if (selectedDept === 'All') return true; // "All Mail" shows everything
-        return msg.label !== 'spam'; // Other inbox categories hide spam by default
-      }
-      return true;
-    })
-    .filter((msg) => selectedDept === 'All' || msg.department === selectedDept)
-    .filter((msg) => msg.text?.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredMessages = useMemo(() => {
+    return messages
+      .filter((msg) => {
+        if (activeTab === 'spam') return msg.label === 'spam';
+        if (activeTab === 'inbox') {
+          if (selectedDept === 'All') return true;
+          return msg.label !== 'spam';
+        }
+        return true;
+      })
+      .filter((msg) => selectedDept === 'All' || msg.department === selectedDept)
+      .filter((msg) => msg.text?.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [messages, activeTab, selectedDept, searchQuery]);
 
   const toggleSelectAll = () => {
     setSelectedMessageIds(selectedMessageIds.length === filteredMessages.length ? [] : filteredMessages.map(m => m._id));
@@ -427,7 +457,7 @@ function App() {
                     ) : (
                       <div className="flex items-center gap-4">
                         <button onClick={fetchMessages} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full"><RefreshCcw size={18} /></button>
-                        {isSyncing && <div className="flex items-center gap-2"><div className="w-32 h-1.5 bg-slate-100 rounded-full overflow-hidden"><motion.div className="h-full bg-blue-600" animate={{ width: `${syncProgress}%` }} /></div><span className="text-[10px] font-bold">{syncProgress}%</span></div>}
+                        {isSyncing && <SyncProgressBar progress={syncProgress} />}
                       </div>
                     )}
                  </AnimatePresence>
