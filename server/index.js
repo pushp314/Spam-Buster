@@ -9,7 +9,6 @@ const rateLimit = require('express-rate-limit');
 const cookieSession = require('cookie-session');
 const { google } = require('googleapis');
 const Message = require('./models/Message');
-const { emailQueue } = require('./config/queue');
 const { classifyMessage } = require('./utils/classifier');
 
 const app = express();
@@ -143,27 +142,71 @@ app.post('/api/auth/logout', async (req, res) => {
   }
 });
 
-// 5. Queue-Based Email Sync
+// 5. Direct Email Sync (No Redis Required)
 app.get('/api/gmail/sync', async (req, res) => {
   if (!req.session.tokens || !req.session.userEmail) {
     return res.status(401).json({ error: 'Gmail not connected' });
   }
   const { model, groqKey, geminiKey, openAIKey, limit = 15 } = req.query;
+  const userEmail = req.session.userEmail;
+  const tokens = req.session.tokens;
 
-  try {
-    const job = await emailQueue.add('sync-emails', {
-      tokens: req.session.tokens,
-      userEmail: req.session.userEmail,
-      model,
-      limit,
-      keys: { groqKey, geminiKey, openAIKey }
-    });
+  // We respond immediately to keep the UI responsive, processing in background
+  res.json({ success: true, message: 'Email sync started in background' });
+
+  // Background execution without Redis
+  (async () => {
+    console.log(`🚀 Starting direct sync for user ${userEmail} (Up to ${limit} messages)`);
     
-    res.json({ success: true, jobId: job.id, message: 'Email sync job added to queue' });
-  } catch (err) {
-    console.error('❌ Sync job queue error:', err);
-    res.status(500).json({ error: 'Failed to queue sync job', message: err.message });
-  }
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+    oauth2Client.setCredentials(tokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    try {
+      const listRes = await gmail.users.messages.list({ 
+        userId: 'me', 
+        maxResults: parseInt(limit) 
+      });
+      const messages = listRes.data.messages || [];
+      
+      let processedCount = 0;
+      for (const msg of messages) {
+        try {
+          const existing = await Message.findOne({ gmailId: msg.id, userEmail });
+          if (existing) continue;
+
+          const detailRes = await gmail.users.messages.get({ userId: 'me', id: msg.id });
+          const { snippet, payload } = detailRes.data;
+          const headers = payload.headers;
+          const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || 'No Subject';
+
+          const classification = await classifyMessage(subject, snippet, model, { groqKey, geminiKey, openAIKey });
+          const newMessage = new Message({
+            text: `Subject: ${subject}\n\n${snippet}`,
+            label: classification.label,
+            department: classification.department,
+            confidence: classification.confidence,
+            reason: classification.reason,
+            gmailId: msg.id,
+            userEmail,
+          });
+
+          await newMessage.save();
+          processedCount++;
+          console.log(`✅ Processed [${processedCount}/${messages.length}]: ${subject}`);
+        } catch (msgErr) {
+          console.error(`❌ Error processing message ${msg.id}:`, msgErr.message);
+        }
+      }
+      console.log(`✨ Direct sync complete. Processed ${processedCount} new messages.`);
+    } catch (err) {
+      console.error(`❌ Direct sync failed:`, err.message);
+    }
+  })();
 });
 
 // 6. Manual Text Check (Still synchronous but uses robust classifier)
