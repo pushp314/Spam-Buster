@@ -53,7 +53,7 @@ const SyncProgressBar = ({ progress }) => (
 );
 
 function App() {
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash-latest');
+  const [selectedModel, setSelectedModel] = useState('llama-3.3-70b-versatile');
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
