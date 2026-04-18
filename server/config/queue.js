@@ -5,6 +5,7 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
 const connection = new IORedis(REDIS_URL, {
   maxRetriesPerRequest: null,
+  family: 4, // Force IPv4 to avoid ECONNREFUSED on some systems
 });
 
 connection.on('error', (err) => {
