@@ -27,19 +27,23 @@ const safeParse = (text, fallback = { label: 'not spam', department: 'Other', co
   }
 };
 
-/**
- * Normalize department to match allowed enums
- * @param {string} dept 
- * @returns {string}
- */
 const normalizeDepartment = (dept) => {
-  const validDepts = ['Maths department', 'CS department', 'Management department', 'Science department'];
+  const validDepts = [
+    { key: 'Maths department', keywords: ['math', 'calc', 'algebra', 'statistic', 'geometry', 'arithmetic'] },
+    { key: 'CS department', keywords: ['computer', 'programming', 'code', 'python', 'java', 'web', 'software', 'ai', 'tech'] },
+    { key: 'Management department', keywords: ['management', 'business', 'mba', 'hr', 'marketing', 'finance', 'budget', 'meeting'] },
+    { key: 'Science department', keywords: ['science', 'physics', 'chem', 'bio', 'lab', 'research', 'experiment'] }
+  ];
+  
   if (!dept) return 'Other';
+  const lowerDept = dept.toLowerCase();
   
   const found = validDepts.find(d => 
-    dept.toLowerCase().includes(d.split(' ')[0].toLowerCase())
+    lowerDept.includes(d.key.split(' ')[0].toLowerCase()) || 
+    d.keywords.some(k => lowerDept.includes(k))
   );
-  return found || 'Other';
+  
+  return found ? found.key : 'Other';
 };
 
 /**
@@ -60,30 +64,30 @@ const withTimeout = (promise, ms = 15000) => {
  */
 const classifyMessage = async (subject, snippet, selectedModel, keys = {}) => {
   const modelId = selectedModel || 'llama-3.3-70b-versatile';
-  const text = `Subject: ${subject}\nSnippet: ${snippet}`;
-  
-  const prompt = `Act as a Naive Bayes Classifier. Classify based on word frequency and spam patterns:
-  
-  EXAMPLES:
-  1. "Your exam schedule for Advanced Calculus is attached" -> Label: "not spam", Dept: "Maths department"
-  2. "New Python internship opening at Tech Corp" -> Label: "not spam", Dept: "CS department"
-  3. "Winning lottery ticket #4920 inside! Click to claim $50k" -> Label: "spam", Dept: "Other"
-  4. "Quarterly budget meeting moved to Tuesday" -> Label: "not spam", Dept: "Management department"
-  
-  CRITERIA:
-  - SPAM: High frequency of tokens like "Free", "Lottery", "Urgent", "Click here", "Action required".
-  - NOT SPAM: Natural conversation, academic or professional patterns.
+  const prompt = `You are a specialized email classifier for a university system. 
+  Your goal is to categorize incoming emails based on their SUBJECT and CONTENT into specific academic departments.
 
-  Strict JSON output only:
+  DEPARTMENTS:
+  - "Maths department": Algebra, Calculus, Statistics, Mathematics courses, Exams.
+  - "CS department": Computer Science, Programming, Coding, AI, Web Dev, Software.
+  - "Management department": Business, MBA, Finance, HR, Meetings, Administration.
+  - "Science department": Physics, Chemistry, Biology, Lab work, Research.
+  - "Other": Use for anything else, general spam, or non-departmental mail.
+
+  SPAM CLASSIFICATION:
+  Identify as "spam" if the email contains promotional offers, phishing links, lottery wins, or irrelevant urgent requests.
+
+  STRICT JSON OUTPUT:
   {
-    "label": "spam" or "not spam",
+    "label": "spam" | "not spam",
     "department": "Maths department" | "CS department" | "Management department" | "Science department" | "Other",
     "confidence": number,
-    "reason": "Explain using probability patterns"
+    "reason": "Short reason for this classification"
   }
 
-  DATA:
-  "${text}"`;
+  EMAIL TO CLASSIFY:
+  Subject: ${subject}
+  Content: ${snippet}`;
 
   try {
     let responseText;
